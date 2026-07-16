@@ -1,0 +1,15 @@
+services: 
+  backend:
+    container_name: backend-core-backend
+
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    
+    ports:
+      - "8000:8000"
+
+    restart: unless-stopped
+
+    tty: true 
+
