@@ -1,0 +1,43 @@
+# Copiar a /etc/fail2ban/jail.local en la VPS
+# Copiar los filtros de infra/fail2ban/filter.d/*.conf a /etc/fail2ban/filter.d/
+
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+bantime.increment = true      # bans progresivos: reincidentes se banean mas tiempo
+bantime.factor = 3
+bantime.maxtime = 1w
+
+[sshd]
+enabled  = true
+port     = 22
+filter   = sshd
+logpath  = /var/log/auth.log
+maxretry = 3
+findtime = 5m
+bantime  = 2h
+
+[nginx-req-limit]
+enabled  = true
+filter   = nginx-req-limit
+logpath  = /var/log/nginx/backend-access.log
+maxretry = 15      # 15 respuestas 429 en la ventana findtime -> ban
+findtime = 2m
+bantime  = 1h
+
+[nginx-http-flood]
+enabled  = true
+filter   = nginx-http-flood
+logpath  = /var/log/nginx/backend-access.log
+maxretry = 30      # 30 errores 4xx/5xx en la ventana -> ban
+findtime = 2m
+bantime  = 1h
+
+[nginx-botsearch]
+enabled  = true
+filter   = nginx-botsearch
+logpath  = /var/log/nginx/backend-access.log
+maxretry = 10
+findtime = 5m
+bantime  = 1h

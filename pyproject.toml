@@ -1,0 +1,12 @@
+[project]
+name = "backend-core"
+version = "0.1.0"
+description = "Backend API foor the Database-Centric Platform"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.139.0",
+    "slowapi>=0.1.10",
+    "uvicorn[standard]>=0.51.0",
+]
+
