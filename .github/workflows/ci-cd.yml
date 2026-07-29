@@ -52,7 +52,7 @@ jobs:
         uses: appleboy/ssh-action@v0.1.9
         with:
           host: ${{ secrets.SSH_VPS}}
-          username: qa
+          username: Back
           key: ${{ secrets.SSH_PEDRITO }}
           port: 22
           script: |
