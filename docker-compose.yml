@@ -5,6 +5,12 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile
+
+    env_file:
+      - .env
+
+    environment:
+      - .env
     
     ports:
       - "8000:8000"

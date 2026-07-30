@@ -1,0 +1,86 @@
+"""Administration service orchestration.
+
+Maps Stored Procedure results into typed DTOs for administrative endpoints.
+No business rules (who can become admin, quota policy, etc.) live here —
+those are enforced by the database layer and by the `require_role`
+authorization dependency at the HTTP boundary.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Mapping
+from typing import Any
+
+from app.admin.interfaces.admin_repository import AdminRepositoryProtocol
+from app.admin.schemas.admin_schemas import AdminUserSummary
+from app.databases.schemas.database_schemas import DatabaseInstance, DatabaseStatus
+
+logger = logging.getLogger(__name__)
+
+
+class AdminService:
+    """Coordinate administrative orchestration for the `/admin` API."""
+
+    def __init__(self, repository: AdminRepositoryProtocol) -> None:
+        """Initialize the service with an administration repository."""
+
+        self._repository = repository
+
+    def list_users(self) -> list[AdminUserSummary]:
+        """List all registered users."""
+
+        rows = self._repository.list_users()
+        return [self._to_user_summary(row) for row in rows]
+
+    def update_user_role(self, user_id: str, role: str) -> AdminUserSummary:
+        """Update the role assigned to a user."""
+
+        self._repository.update_user_role(user_id, role)
+        logger.info("User role updated", extra={"user_id": user_id, "role": role})
+        return AdminUserSummary(user_id=user_id, role=role)
+
+    def list_all_databases(self) -> list[DatabaseInstance]:
+        """List every provisioned database across all users."""
+
+        rows = self._repository.list_all_databases()
+        return [self._to_database_instance(row) for row in rows]
+
+    @staticmethod
+    def _normalized(row: Mapping[str, Any]) -> dict[str, Any]:
+        return {str(key).lower(): value for key, value in row.items()}
+
+    def _to_user_summary(self, row: Mapping[str, Any]) -> AdminUserSummary:
+        data = self._normalized(row)
+        return AdminUserSummary(
+            user_id=str(data.get("user_id") or data.get("usuarioid") or data.get("id") or ""),
+            email=data.get("email") or data.get("correo"),
+            name=data.get("name") or data.get("nombre"),
+            role=data.get("role") or data.get("rol"),
+            provider=data.get("provider") or data.get("proveedor"),
+        )
+
+    def _to_database_instance(self, row: Mapping[str, Any]) -> DatabaseInstance:
+        data = self._normalized(row)
+        status_value = str(
+            data.get("status") or data.get("estado") or DatabaseStatus.UNKNOWN.value
+        ).lower()
+        try:
+            status = DatabaseStatus(status_value)
+        except ValueError:
+            status = DatabaseStatus.UNKNOWN
+
+        return DatabaseInstance(
+            database_id=str(
+                data.get("database_id")
+                or data.get("basedatosid")
+                or data.get("id")
+                or ""
+            ),
+            name=data.get("name") or data.get("nombre"),
+            status=status,
+            created_at=data.get("created_at") or data.get("fechacreacion"),
+            ttl_expires_at=data.get("ttl_expires_at") or data.get("fechaexpiracion"),
+            storage_limit_mb=data.get("storage_limit_mb") or data.get("limitealmacenamientomb"),
+            storage_used_mb=data.get("storage_used_mb") or data.get("almacenamientousadomb"),
+        )

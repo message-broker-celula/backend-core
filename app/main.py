@@ -6,6 +6,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.admin.api.admin_routes import router as admin_router
+from app.auth.api.oauth_routes import router as auth_router
+from app.celulas.api.celula_routes import router as celulas_router
+from app.core.config import settings
+from app.databases.api.database_routes import router as databases_router
+
 # -----------------------------------------------------------------------
 # Rate limiting a nivel de aplicacion (defensa en profundidad).
 # El limite "duro" y real vive en Nginx (limit_req/limit_conn) + fail2ban,
@@ -21,12 +27,14 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.include_router(auth_router)
+app.include_router(databases_router)
+app.include_router(admin_router)
+app.include_router(celulas_router)
 
-# Solo aceptar Host headers esperados (evita ataques de host header
-# spoofing / cache poisoning cuando el backend queda tras Nginx).
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"],  # TODO: restringir a ["api.<celula>.andrescortes.dev", "localhost"] en produccion
+    allowed_hosts=settings.app.trusted_hosts,
 )
 
 
