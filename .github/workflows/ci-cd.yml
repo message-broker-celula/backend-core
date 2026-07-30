@@ -50,6 +50,7 @@ jobs:
     name: Desplegar en el VPS
     needs: build-and-push
     runs-on: ubuntu-latest
+    environment: production          # <-- AGREGADO
     steps:
       - name: Conectarse por SSH y desplegar
         uses: appleboy/ssh-action@v1.0.3
@@ -65,7 +66,7 @@ jobs:
             export BACKEND_IMAGE="ghcr.io/message-broker-celula/backend-core:latest"
 
             docker pull $BACKEND_IMAGE
-            cd /home/Back/backend-core
-            docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate backend
+            cd /home/Back                                                          # <-- CAMBIADO (sin /backend-core)
+            docker compose -f docker-compose.prod.backup.yml up -d --no-deps --force-recreate backend   # <-- CAMBIADO (nombre del archivo)
             docker image prune -f
             echo "Despliegue completado con éxito: $(date)"

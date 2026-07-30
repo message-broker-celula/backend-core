@@ -6,7 +6,7 @@ implementation details while still providing a typed execution contract.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -18,7 +18,9 @@ class StoredProcedureExecutionResult(BaseModel):
     Attributes:
         row_count: Number of rows returned by the stored procedure.
         rows: Sequence of mapped row payloads.
-        output_parameters: Optional stored procedure output parameters.
+        output_parameters: Reserved for the future use. OUTOUT values from Stored
+            Procedures currently arrive via the trailing SELECT that each 
+            procedure call issues, not via driver.level parameter binding. 
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -35,17 +37,29 @@ class StoredProcedureExecutorProtocol(Protocol):
     expose a business-oriented execution API to repositories.
     """
 
-    def execute(
+    def execute_sql(
         self,
-        procedure_name: str,
-        parameters: Mapping[str, Any] | None = None,
+        sql: str, 
+        parameters: Sequence[Any] = (),
         *,
+        procedure_name: str,
         timeout: int | None = None,
+
+
     ) -> StoredProcedureExecutionResult:
-        """Execute a named stored procedure.
+        """Execute a raw SQL statement (typically a DECLARE/EXEC/SELECT block).
+
+        Callers own the exact SQL test so they can express named parameters, 
+        OUTPUT parameters, and multi-statement blacks exactly as definied in the 
+        database contract (see the backend integration guide). The executor 
+        only handles connection management and result mapping. 
 
         Args:
-            procedure_name: Stored procedure name.
+            sql: Full SQL test to execute (may declare variables, call a 
+                Stored Procedure with OUTPUT parameters, and SELECT the result).
+            parameters: Ordered values bound ti the "?" placeholders in `sql`.
+            procedure_name: Name of Stored Procedure being invoked, used 
+                only for logging/error context. 
             parameters: Optional input/output parameter mapping.
             timeout: Optional execution timeout in seconds.
 
