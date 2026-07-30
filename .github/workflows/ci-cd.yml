@@ -33,12 +33,18 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Set image name
+        id: meta
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          echo "image=${IMAGE,,}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         run: |
-          docker build -f Dockerfile -t ghcr.io/${{ github.repository }}:latest .
-          docker push ghcr.io/${{ github.repository }}:latest
+          docker build -f Dockerfile -t ${{ steps.meta.outputs.image }}:latest .
+          docker push ${{ steps.meta.outputs.image }}:latest
 
   deploy:
     name: Desplegar en el VPS
@@ -55,11 +61,11 @@ jobs:
           script: |
             set -e
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            export LANDING_IMAGE="ghcr.io/${{ github.repository }}:latest"
-            
-            docker pull $LANDING_IMAGE
+
+            export BACKEND_IMAGE="ghcr.io/message-broker-celula/backend-core:latest"
+
+            docker pull $BACKEND_IMAGE
             cd /home/Back/backend-core
-            docker compose up -d --no-deps --force-recreate landing
+            docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate backend
             docker image prune -f
             echo "Despliegue completado con éxito: $(date)"
