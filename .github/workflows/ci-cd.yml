@@ -65,7 +65,7 @@ jobs:
             export BACKEND_IMAGE="ghcr.io/message-broker-celula/backend-core:latest"
 
             docker pull $BACKEND_IMAGE
-            cd /home/Back/backend-core
-            docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate backend
+            cd /srv/projects/backend-core
+            docker compose -f docker-compose.yml up -d --no-deps --force-recreate backend
             docker image prune -f
             echo "Despliegue completado con éxito: $(date)"
