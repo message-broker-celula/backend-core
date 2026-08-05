@@ -58,11 +58,19 @@ async def limit_body_size(request: Request, call_next):
     """
     content_length = request.headers.get("content-length")
     max_body_bytes = 1 * 1024 * 1024  # 1 MB, ajustar segun necesidad real
-    if content_length and int(content_length) > max_body_bytes:
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Payload demasiado grande"},
-        )
+    if content_length:
+        try:
+            parsed_content_length = int(content_length)
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Content-Length invalido"},
+            )
+        if parsed_content_length > max_body_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Payload demasiado grande"},
+            )
     return await call_next(request)
 
 

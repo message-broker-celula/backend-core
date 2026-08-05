@@ -27,3 +27,12 @@ def test_cors_allows_localhost_and_loopback_origins_for_preflight_requests() -> 
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:8000"
+
+
+def test_invalid_content_length_returns_bad_request() -> None:
+    client = TestClient(app)
+
+    response = client.get("/health", headers={"content-length": "invalid"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Content-Length invalido"}
