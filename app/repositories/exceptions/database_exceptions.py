@@ -36,14 +36,14 @@ class RepositoryMappingError(DatabaseIntegrationError):
 class ResourceNotFoundError(DatabaseIntegrationError):
     """Raised when a requested resource does not exist or is not owned by the caller."""
 
-class BusinessRuleViolationError (DatabaseIntegrationError):
+class BusinessRuleViolationError(DatabaseIntegrationError):
     """Raised when a Stored Procedure rejects the operation via THROW.
     
     The `detail` is the exact Spanish message SQL Server produced - it is 
     safe to show directly to the end user, per the backend guide. 
     """
 
-    def __init(self, procedure_name: str, detail: str) -> None: 
+    def __init__(self, procedure_name: str, detail: str) -> None:
         self.procedure_name = procedure_name
-        self.detail = detail 
+        self.detail = detail
         super().__init__(detail)

@@ -34,10 +34,10 @@ class CelulaOrchestrationService:
     def _root_domain(self) -> str:
         return getattr(settings.app, "root_domain", "andrescortes.dev")
 
-    def create_celula(self, subject: str, name: str) -> Celula:
+    def create_celula(self, subject: str, name: str, ip: str | None = None) -> Celula:
         """Create a new célula workspace owned by the subject."""
 
-        row = self._repository.create_celula(subject, name)
+        row = self._repository.create_celula(subject, name, ip)
         logger.info("Célula created", extra={"subject": subject, "name": name})
         return self._to_celula(row, fallback_owner=subject)
 
@@ -63,6 +63,8 @@ class CelulaOrchestrationService:
         service_name: str,
         service_type: CelulaServiceType,
         database_id: str | None,
+        port: int | None,
+        ip: str | None,
     ) -> CelulaService:
         """Register a subdomain-backed service under a célula."""
 
@@ -72,6 +74,8 @@ class CelulaOrchestrationService:
             service_name=service_name,
             service_type=service_type.value,
             database_id=database_id,
+            port=port,
+            ip=ip,
         )
         logger.info(
             "Célula service registered",
@@ -93,6 +97,17 @@ class CelulaOrchestrationService:
             "Célula service deleted",
             extra={"celula_id": celula_id, "service_id": service_id},
         )
+
+    def change_service_status(
+        self,
+        subject: str,
+        service_id: str,
+        new_status: str,
+        ip: str | None,
+    ) -> None:
+        """Change a service status through the database layer."""
+
+        self._repository.change_service_status(subject, service_id, new_status, ip)
 
     # ------------------------------------------------------------------
     # Row -> DTO mapping helpers

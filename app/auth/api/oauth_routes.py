@@ -26,14 +26,19 @@ from app.auth.schemas.auth_schemas import (
 from app.auth.services.auth_service import AuthService
 from app.auth.services.oauth_service import OAuthService
 from app.core.config import settings
-from app.repositories.exceptions.database_exceptions import DatabaseIntegrationError
+from app.repositories.exceptions.database_exceptions import (
+    BusinessRuleViolationError,
+    DatabaseIntegrationError,
+)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
 _OAUTH_STATE_COOKIE_NAME = "oauth_state"
+_REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 TOKEN_RESPONSE_EXAMPLE = {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example",
+    "refresh_token": "refresh-token-example",
     "token_type": "bearer",
 }
 AUTHENTICATED_USER_EXAMPLE = {
@@ -89,6 +94,31 @@ def _delete_state_cookie(response: JSONResponse, provider: str) -> None:
 
     response.delete_cookie(
         key=_cookie_key(provider),
+        secure=settings.oauth.state_cookie_secure,
+        samesite=settings.oauth.state_cookie_samesite,
+    )
+
+
+def _set_refresh_token_cookie(response: JSONResponse, refresh_token: str | None) -> None:
+    """Attach the refresh token as an httpOnly cookie when SQL Server issued one."""
+
+    if not refresh_token:
+        return
+    response.set_cookie(
+        key=_REFRESH_TOKEN_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=settings.oauth.state_cookie_secure,
+        samesite=settings.oauth.state_cookie_samesite,
+        max_age=settings.jwt.refresh_expire_minutes * 60,
+    )
+
+
+def _delete_refresh_token_cookie(response: JSONResponse) -> None:
+    """Clear the refresh token cookie."""
+
+    response.delete_cookie(
+        key=_REFRESH_TOKEN_COOKIE_NAME,
         secure=settings.oauth.state_cookie_secure,
         samesite=settings.oauth.state_cookie_samesite,
     )
@@ -264,7 +294,14 @@ def google_callback(
         ) from exc
 
     try:
-        response_data = service.authenticate_oauth_user(provider="google", identity=identity)
+        response_data = service.authenticate_oauth_user(
+            provider="GOOGLE",
+            identity=identity,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except (AuthenticationError, DatabaseIntegrationError) as exc:
         logger.error("Google OAuth authentication failed", extra={"provider": "google"})
         raise HTTPException(
@@ -272,6 +309,7 @@ def google_callback(
             detail="Authentication service unavailable",
         ) from exc
     response = JSONResponse(content=response_data.model_dump(mode="json"))
+    _set_refresh_token_cookie(response, response_data.refresh_token)
     _delete_state_cookie(response, "google")
     return response
 
@@ -426,7 +464,14 @@ def github_callback(
         ) from exc
 
     try:
-        response_data = service.authenticate_oauth_user(provider="github", identity=identity)
+        response_data = service.authenticate_oauth_user(
+            provider="GITHUB",
+            identity=identity,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except (AuthenticationError, DatabaseIntegrationError) as exc:
         logger.error("GitHub OAuth authentication failed", extra={"provider": "github"})
         raise HTTPException(
@@ -434,6 +479,7 @@ def github_callback(
             detail="Authentication service unavailable",
         ) from exc
     response = JSONResponse(content=response_data.model_dump(mode="json"))
+    _set_refresh_token_cookie(response, response_data.refresh_token)
     _delete_state_cookie(response, "github")
     return response
 
@@ -516,17 +562,38 @@ def get_me(current_user: AuthenticatedUser = Depends(get_current_user)) -> Authe
     },
 )
 def refresh_token(
-    refresh_request: RefreshTokenRequest,
+    request: Request,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    refresh_request: RefreshTokenRequest | None = None,
 ) -> JSONResponse:
     """Rotate the provided refresh token and return a new access token."""
 
+    token = (
+        refresh_request.refresh_token
+        if refresh_request is not None
+        else request.cookies.get(_REFRESH_TOKEN_COOKIE_NAME)
+    )
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refresh token required",
+        )
+
     try:
-        response_data = service.refresh_access_token(refresh_request.refresh_token)
+        response_data = service.refresh_access_token(
+            token,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
     except AuthenticationError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
+        ) from exc
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.detail,
         ) from exc
     except DatabaseIntegrationError as exc:
         logger.error("Refresh token rotation failed", exc_info=exc)
@@ -535,7 +602,9 @@ def refresh_token(
             detail="Authentication service unavailable",
         ) from exc
 
-    return JSONResponse(content=response_data.model_dump(mode="json"))
+    response = JSONResponse(content=response_data.model_dump(mode="json"))
+    _set_refresh_token_cookie(response, response_data.refresh_token)
+    return response
 
 
 @router.post(
@@ -581,10 +650,22 @@ def logout(
     """Revoke refresh tokens and acknowledge logout."""
 
     try:
+        cookie_refresh_token = request.cookies.get(_REFRESH_TOKEN_COOKIE_NAME)
         if refresh_request is not None:
-            service.revoke_refresh_token(refresh_request.refresh_token)
+            service.revoke_refresh_token(
+                refresh_request.refresh_token,
+                request.client.host if request.client else None,
+            )
+        elif cookie_refresh_token:
+            service.revoke_refresh_token(
+                cookie_refresh_token,
+                request.client.host if request.client else None,
+            )
         elif current_user is not None:
-            service.revoke_all_refresh_tokens(current_user.subject)
+            service.revoke_all_refresh_tokens(
+                current_user.subject,
+                request.client.host if request.client else None,
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -595,6 +676,8 @@ def logout(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         ) from exc
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except DatabaseIntegrationError as exc:
         logger.error("Logout revocation failed", exc_info=exc)
         raise HTTPException(
@@ -605,4 +688,5 @@ def logout(
     logout_response = JSONResponse(content=LogoutResponse().model_dump())
     _delete_state_cookie(logout_response, "google")
     _delete_state_cookie(logout_response, "github")
+    _delete_refresh_token_cookie(logout_response)
     return logout_response

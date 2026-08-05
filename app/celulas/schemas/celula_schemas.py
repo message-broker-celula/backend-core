@@ -65,10 +65,19 @@ class RegisterCelulaServiceRequest(BaseModel):
         description="Service slug, e.g. 'api', 'auth', 'payments'.",
     )
     service_type: CelulaServiceType = CelulaServiceType.API
+    puerto_interno: int = Field(..., ge=1, le=65535)
     database_id: str | None = Field(
         default=None,
         description="Optional database instance backing this service.",
     )
+
+
+class ChangeServiceStatusRequest(BaseModel):
+    """Request payload for sp_CambiarEstadoServicio."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nuevo_estado: str = Field(..., pattern="^(ACTIVO|CAIDO|PAUSADO)$")
 
 
 class CelulaService(BaseModel):

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.auth.dependencies.auth_dependencies import get_current_user
 from app.auth.schemas.auth_schemas import AuthenticatedUser
@@ -21,6 +21,7 @@ from app.celulas.schemas.celula_schemas import (
     CelulaListResponse,
     CelulaService,
     CelulaServiceListResponse,
+    ChangeServiceStatusRequest,
     CreateCelulaRequest,
     RegisterCelulaServiceRequest,
 )
@@ -59,6 +60,7 @@ def _unavailable(exc: Exception) -> HTTPException:
     summary="Create a new célula workspace",
 )
 def create_celula(
+    request: Request,
     payload: CreateCelulaRequest,
     current_user: CurrentUser,
     service: Service,
@@ -66,7 +68,11 @@ def create_celula(
     """Create a new célula workspace owned by the authenticated user."""
 
     try:
-        return service.create_celula(current_user.subject, payload.name)
+        return service.create_celula(
+            current_user.subject,
+            payload.name,
+            request.client.host if request.client else None,
+        )
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 
@@ -116,6 +122,7 @@ def get_celula(
     summary="Register a subdomain-backed service under a célula",
 )
 def register_celula_service(
+    request: Request,
     celula_id: str,
     payload: RegisterCelulaServiceRequest,
     current_user: CurrentUser,
@@ -130,6 +137,8 @@ def register_celula_service(
             service_name=payload.service_name,
             service_type=payload.service_type,
             database_id=payload.database_id,
+            port=payload.puerto_interno,
+            ip=request.client.host if request.client else None,
         )
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
@@ -170,5 +179,30 @@ def delete_celula_service(
 
     try:
         service.delete_service(current_user.subject, celula_id, service_id)
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.patch(
+    "/services/{service_id}/estado",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Change a registered service status",
+)
+def change_service_status(
+    request: Request,
+    service_id: str,
+    payload: ChangeServiceStatusRequest,
+    current_user: CurrentUser,
+    service: Service,
+) -> None:
+    """Call sp_CambiarEstadoServicio."""
+
+    try:
+        service.change_service_status(
+            current_user.subject,
+            service_id,
+            payload.nuevo_estado,
+            request.client.host if request.client else None,
+        )
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc

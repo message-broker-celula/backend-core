@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -7,6 +8,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.admin.api.admin_routes import router as admin_router
+from app.audit.api.audit_routes import router as audit_router
 from app.auth.api.oauth_routes import router as auth_router
 from app.celulas.api.celula_routes import router as celulas_router
 from app.core.config import settings
@@ -26,11 +28,20 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors.allowed_origins,
+    allow_origin_regex=settings.cors.allow_origin_regex,
+    allow_credentials=settings.cors.allow_credentials,
+    allow_methods=settings.cors.allowed_methods,
+    allow_headers=settings.cors.allowed_headers,
+)
 app.add_middleware(SlowAPIMiddleware)
 app.include_router(auth_router)
 app.include_router(databases_router)
 app.include_router(admin_router)
 app.include_router(celulas_router)
+app.include_router(audit_router)
 
 app.add_middleware(
     TrustedHostMiddleware,

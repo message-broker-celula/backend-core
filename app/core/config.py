@@ -12,6 +12,16 @@ class AppSettings(BaseModel):
     trusted_hosts: list[str]
 
 
+class CorsSettings(BaseModel):
+    """CORS configuration."""
+
+    allowed_origins: list[str]
+    allow_origin_regex: str | None
+    allow_credentials: bool
+    allowed_methods: list[str]
+    allowed_headers: list[str]
+
+
 class JWTSettings(BaseModel):
     """JWT configuration."""
 
@@ -80,6 +90,13 @@ class Settings(BaseSettings):
     app_debug: bool = Field(default=True)
     app_trusted_hosts: str = Field(default="localhost,127.0.0.1,testserver")
 
+    # CORS
+    cors_allowed_origins: str = Field(default="http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:8000")
+    cors_allow_origin_regex: str | None = Field(default=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$")
+    cors_allow_credentials: bool = Field(default=True)
+    cors_allowed_methods: str = Field(default="GET,POST,PUT,PATCH,DELETE,OPTIONS")
+    cors_allowed_headers: str = Field(default="Authorization,Content-Type")
+
     # JWT
     jwt_secret_key: str = Field(default="change-me-in-production")
     jwt_algorithm: str = Field(default="HS256")
@@ -90,6 +107,14 @@ class Settings(BaseSettings):
 
     # SQL Server
     sqlserver_connection_string: str = Field(default="")
+    sqlserver_driver: str = Field(default="ODBC Driver 18 for SQL Server")
+    sqlserver_host: str = Field(default="localhost")
+    sqlserver_port: int = Field(default=1433)
+    sqlserver_database: str = Field(default="MessageBrokerDB")
+    sqlserver_user: str = Field(default="app_backend")
+    sqlserver_password: str = Field(default="")
+    sqlserver_encrypt: str = Field(default="yes")
+    sqlserver_trust_server_certificate: str = Field(default="yes")
     sqlserver_sp_timeout_seconds: int = Field(default=30)
 
     # Google OAuth
@@ -132,6 +157,18 @@ class Settings(BaseSettings):
         )
 
     @property
+    def cors(self) -> CorsSettings:
+        """CORS settings."""
+
+        return CorsSettings(
+            allowed_origins=self._split_csv(self.cors_allowed_origins),
+            allow_origin_regex=self.cors_allow_origin_regex,
+            allow_credentials=self.cors_allow_credentials,
+            allowed_methods=self._split_csv(self.cors_allowed_methods),
+            allowed_headers=self._split_csv(self.cors_allowed_headers),
+        )
+
+    @property
     def jwt(self) -> JWTSettings:
         """JWT Settings."""
 
@@ -148,10 +185,33 @@ class Settings(BaseSettings):
     def database(self) -> DatabaseSettings:
         """Database settings."""
 
+        connection_string = (
+            self.sqlserver_connection_string.strip()
+            or self._build_sqlserver_connection_string()
+        )
         return DatabaseSettings(
-            connection_string=SecretStr(self.sqlserver_connection_string),
+            connection_string=SecretStr(connection_string),
             stored_procedure_timeout_seconds=self.sqlserver_sp_timeout_seconds,
         )
+
+    def _build_sqlserver_connection_string(self) -> str:
+        """Build a pyodbc SQL Server connection string from separated env vars."""
+
+        return (
+            f"DRIVER={{{self.sqlserver_driver}}};"
+            f"SERVER={self.sqlserver_host},{self.sqlserver_port};"
+            f"DATABASE={self.sqlserver_database};"
+            f"UID={self.sqlserver_user};"
+            f"PWD={self.sqlserver_password};"
+            f"Encrypt={self.sqlserver_encrypt};"
+            f"TrustServerCertificate={self.sqlserver_trust_server_certificate}"
+        )
+
+    @staticmethod
+    def _split_csv(value: str) -> list[str]:
+        """Split comma-separated env values into a clean list."""
+
+        return [item.strip() for item in value.split(",") if item.strip()]
 
     @property
     def oauth(self) -> OAuthSettings:

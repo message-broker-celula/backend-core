@@ -77,6 +77,8 @@ class AuthService:
         self,
         provider: str,
         identity: OAuthUserIdentity,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> AccessTokenResponse:
         """Orchestrate the OAuth authentication flow through the repository.
 
@@ -98,8 +100,9 @@ class AuthService:
         registration_result: OAuthRegistrationResult = self._repository.register_oauth_user(
             provider=provider,
             identity=identity,
+            ip=ip,
+            user_agent=user_agent,
         )
-        self._repository.provision_database(registration_result.user_id)
 
         logger.info(
             "OAuth user authenticated",
@@ -108,26 +111,31 @@ class AuthService:
 
         claims = {
             "provider": provider,
-            "role": registration_result.role,
-            "permissions": registration_result.permissions,
         }
         access_token_response = self.create_access_token_response(
             subject=registration_result.user_id,
             additional_claims={k: v for k, v in claims.items() if v is not None},
         )
-
-        if registration_result.refresh_token:
-            access_token_response.refresh_token = registration_result.refresh_token
+        access_token_response.refresh_token = self._repository.issue_refresh_token(
+            subject=registration_result.user_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
 
         return access_token_response
 
-    def refresh_access_token(self, refresh_token: str) -> AccessTokenResponse:
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> AccessTokenResponse:
         """Rotate an existing refresh token and return a new access token."""
 
         if self._repository is None:
             raise AuthenticationError("Authentication repository is not configured")
 
-        refresh_result = self._repository.refresh_access_token(refresh_token)
+        refresh_result = self._repository.refresh_access_token(refresh_token, ip, user_agent)
         claims = {
             "role": refresh_result.role,
             "permissions": refresh_result.permissions,
@@ -139,21 +147,21 @@ class AuthService:
         access_token.refresh_token = refresh_result.refresh_token
         return access_token
 
-    def revoke_refresh_token(self, refresh_token: str) -> None:
+    def revoke_refresh_token(self, refresh_token: str, ip: str | None = None) -> None:
         """Revoke a refresh token in the database."""
 
         if self._repository is None:
             raise AuthenticationError("Authentication repository is not configured")
 
-        self._repository.revoke_refresh_token(refresh_token)
+        self._repository.revoke_refresh_token(refresh_token, ip)
 
-    def revoke_all_refresh_tokens(self, subject: str) -> None:
+    def revoke_all_refresh_tokens(self, subject: str, ip: str | None = None) -> None:
         """Revoke all refresh tokens for a given subject."""
 
         if self._repository is None:
             raise AuthenticationError("Authentication repository is not configured")
 
-        self._repository.revoke_all_refresh_tokens(subject)
+        self._repository.revoke_all_refresh_tokens(subject, ip)
 
     def build_authenticated_user(self, token: str) -> AuthenticatedUser:
         """Build an authenticated user DTO from a validated token.

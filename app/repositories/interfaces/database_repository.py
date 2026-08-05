@@ -6,7 +6,11 @@ stable repository contracts rather than SQL Server details.
 
 from typing import Protocol
 
-from app.auth.schemas.auth_schemas import OAuthRegistrationResult, OAuthUserIdentity
+from app.auth.schemas.auth_schemas import (
+    OAuthRegistrationResult,
+    OAuthUserIdentity,
+    RefreshTokenResult,
+)
 
 
 class DatabaseRepositoryProtocol(Protocol):
@@ -20,6 +24,8 @@ class DatabaseRepositoryProtocol(Protocol):
         self,
         provider: str,
         identity: OAuthUserIdentity,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> OAuthRegistrationResult:
         """Register an OAuth-backed user through the database layer.
 
@@ -31,14 +37,31 @@ class DatabaseRepositoryProtocol(Protocol):
             OAuthRegistrationResult: Typed result from the stored procedure.
         """
 
-    def provision_database(self, subject: str) -> None:
-        """Provision the database resources required by a subject.
+    def issue_refresh_token(
+        self,
+        subject: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> str:
+        """Issue the first refresh token for an authenticated session."""
 
-        Args:
-            subject: Canonical subject identifier.
-        """
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> RefreshTokenResult:
+        """Rotate and validate a refresh token."""
 
-    def get_database_credentials(self, subject: str) -> dict[str, str]:
+    def revoke_refresh_token(self, refresh_token: str, ip: str | None = None) -> None:
+        """Revoke one refresh token."""
+
+    def revoke_all_refresh_tokens(self, subject: str, ip: str | None = None) -> None:
+        """Revoke every refresh token for a subject."""
+
+    def get_database_credentials(self, subject: str, database_id: str) -> dict[str, str]:
         """Fetch credentials for a subject from the database layer.
 
         Args:
@@ -47,3 +70,15 @@ class DatabaseRepositoryProtocol(Protocol):
         Returns:
             dict[str, str]: Typed credential payload.
         """
+
+    def register_event(
+        self,
+        event: str,
+        subject: str | None,
+        database_id: str | None,
+        description: str,
+        ip: str | None,
+        result: str,
+        additional_data: str | None = None,
+    ) -> None:
+        """Register a generic audit event."""

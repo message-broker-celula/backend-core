@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.auth.dependencies.auth_dependencies import get_current_user
 from app.auth.schemas.auth_schemas import AuthenticatedUser
@@ -24,9 +24,15 @@ from app.databases.schemas.database_schemas import (
     DatabaseListResponse,
     DatabaseStatus,
     DatabaseUsage,
+    DaysRemainingResponse,
+    SpacePercentageResponse,
+    UpdateDatabaseSpaceRequest,
+    UpdateDatabaseSpaceResponse,
+    ValidateConnectionResponse,
 )
 from app.databases.services.database_service import DatabaseService
 from app.repositories.exceptions.database_exceptions import (
+    BusinessRuleViolationError,
     DatabaseIntegrationError,
     ResourceNotFoundError,
 )
@@ -53,6 +59,22 @@ def _unavailable(exc: Exception) -> HTTPException:
     )
 
 
+def _business_error(exc: BusinessRuleViolationError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
+
+
+def _touch_database(
+    service: DatabaseService,
+    subject: str,
+    database_id: str,
+    ttl_days: int = 30,
+) -> None:
+    """Validate ownership and refresh the database activity TTL."""
+
+    service.get_database(subject, database_id)
+    service.register_activity(database_id, ttl_days)
+
+
 @router.post(
     "",
     response_model=DatabaseActionResponse,
@@ -65,22 +87,23 @@ def _unavailable(exc: Exception) -> HTTPException:
     ),
 )
 def create_database(
+    request: Request,
+    payload: CreateDatabaseRequest,
     current_user: CurrentUser,
     service: Service,
-    _request: CreateDatabaseRequest | None = None,
 ) -> DatabaseActionResponse:
     """Provision a new database instance for the authenticated user."""
 
     try:
-        service.provision_database(current_user.subject)
+        return service.create_database(
+            current_user.subject,
+            payload.model_dump(),
+            request.client.host if request.client else None,
+        )
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
-
-    return DatabaseActionResponse(
-        database_id=current_user.subject,
-        status=DatabaseStatus.ACTIVE,
-        detail="Database provisioning requested",
-    )
 
 
 @router.get(
@@ -113,7 +136,9 @@ def get_database(
     """Fetch a single database instance owned by the authenticated user."""
 
     try:
-        return service.get_database(current_user.subject, database_id)
+        database = service.get_database(current_user.subject, database_id)
+        service.register_activity(database_id)
+        return database
     except ResourceNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -129,6 +154,7 @@ def get_database(
     summary="Deprovision a database instance",
 )
 def delete_database(
+    request: Request,
     database_id: str,
     current_user: CurrentUser,
     service: Service,
@@ -136,7 +162,14 @@ def delete_database(
     """Deprovision a database instance owned by the authenticated user."""
 
     try:
-        return service.delete_database(current_user.subject, database_id)
+        _touch_database(service, current_user.subject, database_id)
+        return service.delete_database(
+            current_user.subject,
+            database_id,
+            request.client.host if request.client else None,
+        )
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 
@@ -159,6 +192,7 @@ def get_database_credentials(
     """Return connection credentials for the authenticated user's database."""
 
     try:
+        _touch_database(service, current_user.subject, database_id)
         return service.get_credentials(current_user.subject, database_id)
     except ResourceNotFoundError as exc:
         raise HTTPException(
@@ -183,6 +217,7 @@ def get_database_usage(
     """Fetch storage and connection usage for a database instance."""
 
     try:
+        _touch_database(service, current_user.subject, database_id)
         return service.get_usage(current_user.subject, database_id)
     except ResourceNotFoundError as exc:
         raise HTTPException(
@@ -199,6 +234,7 @@ def get_database_usage(
     summary="Pause a database instance",
 )
 def pause_database(
+    request: Request,
     database_id: str,
     current_user: CurrentUser,
     service: Service,
@@ -206,7 +242,14 @@ def pause_database(
     """Pause a database instance owned by the authenticated user."""
 
     try:
-        return service.pause_database(current_user.subject, database_id)
+        _touch_database(service, current_user.subject, database_id)
+        return service.pause_database(
+            current_user.subject,
+            database_id,
+            request.client.host if request.client else None,
+        )
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 
@@ -224,6 +267,155 @@ def resume_database(
     """Resume a previously paused database instance."""
 
     try:
+        _touch_database(service, current_user.subject, database_id)
         return service.resume_database(current_user.subject, database_id)
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.post(
+    "/{database_id}/activity",
+    response_model=DatabaseActionResponse,
+    summary="Register database activity and refresh TTL",
+)
+def register_database_activity(
+    database_id: str,
+    current_user: CurrentUser,
+    service: Service,
+    ttl_days: int = 30,
+) -> DatabaseActionResponse:
+    """Call sp_RegistrarActividad for a database touched by the user."""
+
+    try:
+        service.get_database(current_user.subject, database_id)
+        return service.register_activity(database_id, ttl_days)
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found") from exc
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.post(
+    "/{database_id}/space",
+    response_model=UpdateDatabaseSpaceResponse,
+    summary="Report storage usage",
+)
+def update_database_space(
+    request: Request,
+    database_id: str,
+    payload: UpdateDatabaseSpaceRequest,
+    current_user: CurrentUser,
+    service: Service,
+) -> UpdateDatabaseSpaceResponse:
+    """Call sp_ActualizarEspacio after a write operation."""
+
+    try:
+        _touch_database(service, current_user.subject, database_id, payload.dias_ttl)
+        return service.update_space(
+            database_id,
+            payload.espacio_reportado_mb,
+            request.client.host if request.client else None,
+            payload.dias_ttl,
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found") from exc
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.post(
+    "/{database_id}/connections/validate",
+    response_model=ValidateConnectionResponse,
+    summary="Validate a new database connection",
+)
+def validate_database_connection(
+    database_id: str,
+    current_user: CurrentUser,
+    service: Service,
+) -> ValidateConnectionResponse:
+    """Call sp_ValidarConexion before opening a user DB connection."""
+
+    try:
+        _touch_database(service, current_user.subject, database_id)
+        return service.validate_connection(database_id)
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found") from exc
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.post(
+    "/{database_id}/connections/release",
+    response_model=DatabaseActionResponse,
+    summary="Release a database connection",
+)
+def release_database_connection(
+    database_id: str,
+    current_user: CurrentUser,
+    service: Service,
+) -> DatabaseActionResponse:
+    """Call sp_LiberarConexion after closing a user DB connection."""
+
+    try:
+        _touch_database(service, current_user.subject, database_id)
+        return service.release_connection(database_id)
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found") from exc
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.get(
+    "/{database_id}/ttl-days",
+    response_model=DaysRemainingResponse,
+    summary="Get remaining TTL days",
+)
+def get_ttl_days(
+    database_id: str,
+    current_user: CurrentUser,
+    service: Service,
+) -> DaysRemainingResponse:
+    """Read fn_DiasRestantesTTL for a user database."""
+
+    try:
+        _touch_database(service, current_user.subject, database_id)
+        return DaysRemainingResponse(
+            database_id=database_id,
+            dias_restantes=service.get_ttl_days_remaining(database_id),
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found") from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.get(
+    "/{database_id}/space-percentage",
+    response_model=SpacePercentageResponse,
+    summary="Get storage usage percentage",
+)
+def get_space_percentage(
+    database_id: str,
+    current_user: CurrentUser,
+    service: Service,
+) -> SpacePercentageResponse:
+    """Read fn_PorcentajeEspacioUsado for a user database."""
+
+    try:
+        _touch_database(service, current_user.subject, database_id)
+        return SpacePercentageResponse(
+            database_id=database_id,
+            porcentaje_usado=service.get_space_percentage(database_id),
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found") from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc

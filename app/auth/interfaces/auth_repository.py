@@ -26,6 +26,8 @@ class AuthRepositoryProtocol(Protocol):
         self,
         provider: str,
         identity: OAuthUserIdentity,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> OAuthRegistrationResult:
         """Register a provider-backed identity.
 
@@ -39,26 +41,22 @@ class AuthRepositoryProtocol(Protocol):
 
         """
 
-    def provision_database(self, subject: str) -> None:
-        """Provision the required database resources for a user.
+    def issue_refresh_token(
+        self,
+        subject: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> str:
+        """Issue the first refresh token for an authenticated session."""
 
-        Args:
-            subject: Canonical subject identifier.
-
-        """
-
-    def get_database_credentials(self, subject: str) -> dict[str, str]:
-        """Fetch database credentials for a subject.
-
-        Args:
-            subject: Canonical subject identifier.
-
-        Returns:
-            dict[str, str]: Credentials payload used by the application layer.
-
-        """
-
-    def refresh_access_token(self, refresh_token: str) -> RefreshTokenResult:
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> RefreshTokenResult:
         """Rotate and validate a refresh token through the database layer.
 
         Args:
@@ -68,14 +66,14 @@ class AuthRepositoryProtocol(Protocol):
             RefreshTokenResult: Result containing a new refresh token and subject.
         """
 
-    def revoke_refresh_token(self, refresh_token: str) -> None:
+    def revoke_refresh_token(self, refresh_token: str, ip: str | None = None) -> None:
         """Revoke a refresh token in the database.
 
         Args:
             refresh_token: Refresh token to invalidate.
         """
 
-    def revoke_all_refresh_tokens(self, subject: str) -> None:
+    def revoke_all_refresh_tokens(self, subject: str, ip: str | None = None) -> None:
         """Revoke all refresh tokens for a specific subject.
 
         Args:

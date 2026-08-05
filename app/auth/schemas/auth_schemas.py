@@ -51,15 +51,18 @@ class OAuthUserIdentity(BaseModel):
 
 
 class OAuthRegistrationResult(BaseModel):
-    """Stored Procedure result contract returned after provider registration."""
+    """sp_RegistrarOAuth result contract.
+
+    Only carries what the Stored Procedure actually returns. Role,
+    permissions, and refresh tokens are NOT part of this contract — the
+    guide's version of sp_RegistrarOAuth only outputs @id_usuario and
+    @es_nuevo, so anything beyond that is decided in Python, not SQL Server.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     user_id: str
     first_login: bool | None = None
-    role: str | None = None
-    permissions: list[str] = Field(default_factory=list)
-    refresh_token: str | None = None
 
 
 class RefreshTokenResult(BaseModel):

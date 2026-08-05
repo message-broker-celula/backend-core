@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.admin.repositories.admin_repository import AdminRepository
 from app.admin.schemas.admin_schemas import (
@@ -23,7 +23,10 @@ from app.admin.schemas.admin_schemas import (
 from app.admin.services.admin_service import AdminService
 from app.auth.dependencies.auth_dependencies import require_role
 from app.auth.schemas.auth_schemas import AuthenticatedUser
-from app.repositories.exceptions.database_exceptions import DatabaseIntegrationError
+from app.repositories.exceptions.database_exceptions import (
+    BusinessRuleViolationError,
+    DatabaseIntegrationError,
+)
 
 router = APIRouter(prefix="/admin", tags=["Administration"])
 logger = logging.getLogger(__name__)
@@ -53,11 +56,20 @@ def _unavailable(exc: Exception) -> HTTPException:
     summary="List all registered users",
     description="Requires the 'admin' role.",
 )
-def list_users(_admin: RequireAdmin, service: Service) -> AdminUserListResponse:
+def list_users(
+    admin: RequireAdmin,
+    service: Service,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+) -> AdminUserListResponse:
     """List all registered users for administrative oversight."""
 
     try:
-        return AdminUserListResponse(users=service.list_users())
+        return AdminUserListResponse(
+            users=service.list_users(admin.subject, page, page_size)
+        )
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 
@@ -69,15 +81,23 @@ def list_users(_admin: RequireAdmin, service: Service) -> AdminUserListResponse:
     description="Requires the 'admin' role.",
 )
 def update_user_role(
+    request: Request,
     user_id: str,
     payload: UpdateUserRoleRequest,
-    _admin: RequireAdmin,
+    admin: RequireAdmin,
     service: Service,
 ) -> AdminUserSummary:
     """Update the role assigned to a user."""
 
     try:
-        return service.update_user_role(user_id, payload.role)
+        return service.update_user_role(
+            admin.subject,
+            user_id,
+            payload.role,
+            request.client.host if request.client else None,
+        )
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 
@@ -91,10 +111,25 @@ def update_user_role(
         "'admin' role."
     ),
 )
-def list_all_databases(_admin: RequireAdmin, service: Service) -> AdminDatabaseListResponse:
+def list_all_databases(
+    admin: RequireAdmin,
+    service: Service,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    status_filter: str | None = Query(default=None, pattern="^(ACTIVA|PAUSADA|ELIMINADA)$"),
+) -> AdminDatabaseListResponse:
     """List every provisioned database across all users."""
 
     try:
-        return AdminDatabaseListResponse(databases=service.list_all_databases())
+        return AdminDatabaseListResponse(
+            databases=service.list_all_databases(
+                admin.subject,
+                page,
+                page_size,
+                status_filter,
+            )
+        )
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc

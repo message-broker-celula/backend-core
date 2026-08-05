@@ -149,7 +149,8 @@ def require_role(*allowed_roles: str) -> Callable[[AuthenticatedUser], Authentic
     def dependency(
         current_user: AuthenticatedUser = Depends(get_current_user),
     ) -> AuthenticatedUser:
-        if not current_user.role or current_user.role not in allowed_roles:
+        normalized_allowed_roles = {role.lower() for role in allowed_roles}
+        if not current_user.role or current_user.role.lower() not in normalized_allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden",

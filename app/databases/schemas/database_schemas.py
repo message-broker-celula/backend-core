@@ -22,14 +22,64 @@ class DatabaseStatus(str, Enum):
 
 
 class CreateDatabaseRequest(BaseModel):
-    """Request payload to provision an additional database instance."""
+    """Request payload for sp_CrearBD."""
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = Field(
-        default=None,
-        description="Optional friendly name for the database instance.",
-    )
+    nombre_motor: str = Field(..., examples=["MYSQL"])
+    version_motor: str = Field(..., examples=["8.4"])
+    nombre_bd: str
+    host: str
+    puerto: int
+    usuario_bd: str
+    password_bd: str
+    espacio_maximo_mb: int = 20
+    conexiones_maximas: int = 5
+    ttl_dias: int = 30
+    id_celula: str | None = None
+
+
+class UpdateDatabaseSpaceRequest(BaseModel):
+    """Request payload for sp_ActualizarEspacio."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    espacio_reportado_mb: float
+    dias_ttl: int = 30
+
+
+class UpdateDatabaseSpaceResponse(BaseModel):
+    """Response returned after sp_ActualizarEspacio."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    permitir_escritura: bool
+
+
+class ValidateConnectionResponse(BaseModel):
+    """Response returned after sp_ValidarConexion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    conexion_permitida: bool
+
+
+class DaysRemainingResponse(BaseModel):
+    """TTL days remaining for a database."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    database_id: str
+    dias_restantes: int | None = None
+
+
+class SpacePercentageResponse(BaseModel):
+    """Storage usage percentage for a database."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    database_id: str
+    porcentaje_usado: float | None = None
 
 
 class DatabaseInstance(BaseModel):
@@ -64,6 +114,7 @@ class DatabaseCredentials(BaseModel):
     database_name: str | None = None
     username: str | None = None
     password: str | None = None
+    algoritmo: str | None = None
     connection_string: str | None = None
 
 

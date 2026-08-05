@@ -1,8 +1,8 @@
 """Concrete SQL Server-backed repository implementation.
 
-This repository is intentionally thin and delegates all business-facing
-operations to the reusable stored procedure executor. It does not contain
-business rules, inline SQL, or CRUD logic.
+This is the only repository implementation that knows SQL Server object names.
+It calls stored procedures and functions with parameter placeholders only; all
+business decisions remain in the database layer.
 """
 
 from __future__ import annotations
@@ -11,382 +11,460 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.auth.schemas.auth_schemas import (
-    AccessTokenResponse,
     OAuthRegistrationResult,
     OAuthUserIdentity,
+    RefreshTokenResult,
 )
-from app.repositories.exceptions.database_exceptions import (
-    RepositoryMappingError,
-    StoredProcedureExecutionError,
-)
+from app.repositories.exceptions.database_exceptions import RepositoryMappingError
 from app.repositories.interfaces.database_repository import DatabaseRepositoryProtocol
 from app.repositories.interfaces.sp_executor import StoredProcedureExecutorProtocol
 
-REGISTER_OAUTH_USER_SP = "sp_RegistrarOAuthUsuario"
-PROVISION_DATABASE_SP = "sp_AprovisionarBaseDatos"
-GET_DATABASE_CREDENTIALS_SP = "sp_ObtenerCredencialesDB"
-REFRESH_ACCESS_TOKEN_SP = "sp_RotarRefreshToken"
-REVOKE_REFRESH_TOKEN_SP = "sp_RevocarRefreshToken"
-REVOKE_ALL_REFRESH_TOKENS_SP = "sp_RevocarRefreshTokensPorUsuario"
-
-# --- Database lifecycle management (module: app.databases) ---
-LIST_DATABASES_SP = "sp_ListarBasesDatosPorUsuario"
-GET_DATABASE_SP = "sp_ObtenerBaseDatos"
-DELETE_DATABASE_SP = "sp_EliminarBaseDatos"
-GET_DATABASE_USAGE_SP = "sp_ObtenerUsoBaseDatos"
-PAUSE_DATABASE_SP = "sp_PausarBaseDatos"
-RESUME_DATABASE_SP = "sp_ReanudarBaseDatos"
-
-# --- Administration (module: app.admin) ---
-LIST_USERS_SP = "sp_ListarUsuarios"
-UPDATE_USER_ROLE_SP = "sp_ActualizarRolUsuario"
-LIST_ALL_DATABASES_SP = "sp_ListarTodasLasBasesDatos"
-
-# --- Célula / service provisioning (module: app.celulas) ---
-CREATE_CELULA_SP = "sp_CrearCelula"
-LIST_CELULAS_SP = "sp_ListarCelulasPorUsuario"
-GET_CELULA_SP = "sp_ObtenerCelula"
-REGISTER_CELULA_SERVICE_SP = "sp_RegistrarServicioCelula"
-LIST_CELULA_SERVICES_SP = "sp_ListarServiciosCelula"
-DELETE_CELULA_SERVICE_SP = "sp_EliminarServicioCelula"
-
 
 class SQLServerRepository(DatabaseRepositoryProtocol):
-    """Repository implementation for SQL Server stored-procedure orchestration.
-
-    The repository maps business-oriented service calls to stored-procedure
-    execution through the reusable executor boundary.
-    """
+    """Repository implementation for SQL Server stored-procedure orchestration."""
 
     def __init__(self, executor: StoredProcedureExecutorProtocol) -> None:
-        """Initialize the repository with a stored procedure executor.
-
-        Args:
-            executor: Reusable SQL Server execution abstraction.
-        """
-
         self._executor = executor
+
+    # ------------------------------------------------------------------
+    # Authentication
+    # ------------------------------------------------------------------
 
     def register_oauth_user(
         self,
         provider: str,
         identity: OAuthUserIdentity,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> OAuthRegistrationResult:
-        """Register an OAuth-backed identity through the database layer.
+        """Register or update an OAuth identity through sp_RegistrarOAuth."""
 
-        Args:
-            provider: Provider name.
-            identity: Provider-normalized OAuth identity.
+        sql = """
+            DECLARE @id_usuario UNIQUEIDENTIFIER;
+            DECLARE @es_nuevo BIT;
 
-        Returns:
-            OAuthRegistrationResult: Typed registration contract.
+            EXEC sp_RegistrarOAuth
+                @oauth_provider = ?,
+                @oauth_id = ?,
+                @nombre = ?,
+                @correo = ?,
+                @avatar = ?,
+                @ip = ?,
+                @user_agent = ?,
+                @id_usuario = @id_usuario OUTPUT,
+                @es_nuevo = @es_nuevo OUTPUT;
+
+            SELECT @id_usuario AS id_usuario, @es_nuevo AS es_nuevo;
         """
-
-        result = self._executor.execute(
-            REGISTER_OAUTH_USER_SP,
-            {
-                "Proveedor": provider,
-                "UsuarioExternoId": identity.provider_user_id,
-                "Email": identity.email,
-                "Nombre": identity.name,
-                "AvatarUrl": identity.avatar,
-                "EmailVerificado": identity.verified_email,
-            },
+        result = self._executor.execute_sql(
+            sql,
+            (
+                provider.upper(),
+                identity.provider_user_id,
+                identity.name,
+                identity.email,
+                identity.avatar,
+                ip,
+                user_agent,
+            ),
+            procedure_name="sp_RegistrarOAuth",
         )
-
-        first_row = self._first_row(result.rows, REGISTER_OAUTH_USER_SP)
-        user_id = self._read_string(first_row, "UserId", "UsuarioId", "user_id", "subject")
-        first_login = self._read_optional_bool(
-            first_row,
-            "FirstLogin",
-            "PrimerInicio",
-            "first_login",
-        )
-        role = self._read_optional_string(
-            first_row,
-            "Role",
-            "Rol",
-            "role",
-        )
-        permissions = self._read_permissions(
-            first_row,
-            "Permissions",
-            "Permisos",
-            "permissions",
-        )
-        refresh_token = self._read_optional_string(
-            first_row,
-            "RefreshToken",
-            "refresh_token",
-            "new_refresh_token",
-            "token",
-        )
+        row = self._first_row(result.rows, "sp_RegistrarOAuth")
         return OAuthRegistrationResult(
-            user_id=user_id,
-            first_login=first_login,
-            role=role,
-            permissions=permissions,
-            refresh_token=refresh_token,
+            user_id=self._read_string(row, "id_usuario", "UsuarioId", "user_id"),
+            first_login=self._read_optional_bool(row, "es_nuevo", "EsNuevo"),
         )
 
-    def refresh_access_token(self, refresh_token: str) -> RefreshTokenResult:
-        """Rotate and validate a refresh token through the database layer."""
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> RefreshTokenResult:
+        """Rotate and validate a refresh token through sp_RotarRefreshToken."""
 
-        result = self._executor.execute(
-            REFRESH_ACCESS_TOKEN_SP,
-            {"RefreshToken": refresh_token},
+        sql = """
+            DECLARE @id_usuario UNIQUEIDENTIFIER;
+            DECLARE @token_nuevo NVARCHAR(512);
+
+            EXEC sp_RotarRefreshToken
+                @token_actual = ?,
+                @ip = ?,
+                @user_agent = ?,
+                @dias_validez = ?,
+                @id_usuario = @id_usuario OUTPUT,
+                @token_nuevo = @token_nuevo OUTPUT;
+
+            SELECT @id_usuario AS id_usuario, @token_nuevo AS token_nuevo;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (refresh_token, ip, user_agent, validity_days),
+            procedure_name="sp_RotarRefreshToken",
         )
-        first_row = self._first_row(result.rows, REFRESH_ACCESS_TOKEN_SP)
-        subject = self._read_string(
-            first_row,
-            "UserId",
-            "UsuarioId",
-            "subject",
-            "sub",
-        )
-        new_refresh_token = self._read_string(
-            first_row,
-            "RefreshToken",
-            "refresh_token",
-            "new_refresh_token",
-            "token",
-        )
-        role = self._read_optional_string(
-            first_row,
-            "Role",
-            "Rol",
-            "role",
-        )
-        permissions = self._read_permissions(
-            first_row,
-            "Permissions",
-            "Permisos",
-            "permissions",
-        )
+        row = self._first_row(result.rows, "sp_RotarRefreshToken")
         return RefreshTokenResult(
-            subject=subject,
-            refresh_token=new_refresh_token,
-            role=role,
-            permissions=permissions,
+            subject=self._read_string(row, "id_usuario", "UsuarioId", "subject", "sub"),
+            refresh_token=self._read_string(row, "token_nuevo", "refresh_token", "RefreshToken", "token"),
+            role=self._read_optional_string(row, "role", "Rol"),
+            permissions=self._read_permissions(row, "permissions", "Permisos"),
         )
 
-    def revoke_refresh_token(self, refresh_token: str) -> None:
-        """Revoke a refresh token in the database."""
+    def issue_refresh_token(
+        self,
+        subject: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> str:
+        """Issue the first refresh token for a session through sp_EmitirRefreshToken."""
 
-        self._executor.execute(REVOKE_REFRESH_TOKEN_SP, {"RefreshToken": refresh_token})
+        sql = """
+            DECLARE @token_nuevo NVARCHAR(512);
 
-    def revoke_all_refresh_tokens(self, subject: str) -> None:
-        """Revoke all refresh tokens associated with a subject."""
+            EXEC sp_EmitirRefreshToken
+                @id_usuario = ?,
+                @ip = ?,
+                @user_agent = ?,
+                @dias_validez = ?,
+                @token_nuevo = @token_nuevo OUTPUT;
 
-        self._executor.execute(REVOKE_ALL_REFRESH_TOKENS_SP, {"UsuarioId": subject})
+            SELECT @token_nuevo AS token_nuevo;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (subject, ip, user_agent, validity_days),
+            procedure_name="sp_EmitirRefreshToken",
+        )
+        row = self._first_row(result.rows, "sp_EmitirRefreshToken")
+        return self._read_string(row, "token_nuevo", "refresh_token", "token")
+
+    def revoke_refresh_token(self, refresh_token: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_RevocarRefreshToken @token = ?, @ip = ?;",
+            (refresh_token, ip),
+            procedure_name="sp_RevocarRefreshToken",
+        )
+
+    def revoke_all_refresh_tokens(self, subject: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_RevocarTodosLosRefreshTokens @id_usuario = ?, @ip = ?;",
+            (subject, ip),
+            procedure_name="sp_RevocarTodosLosRefreshTokens",
+        )
+
+    # ------------------------------------------------------------------
+    # Databases
+    # ------------------------------------------------------------------
+
+    def create_database(
+        self,
+        subject: str,
+        payload: Mapping[str, Any],
+        ip: str | None,
+    ) -> str:
+        """Create a database through sp_CrearBD and return @id_bd."""
+
+        sql = """
+            DECLARE @id_bd UNIQUEIDENTIFIER;
+
+            EXEC sp_CrearBD
+                @id_usuario = ?,
+                @nombre_motor = ?,
+                @version_motor = ?,
+                @nombre_bd = ?,
+                @host = ?,
+                @puerto = ?,
+                @usuario_bd = ?,
+                @password_bd = ?,
+                @ip = ?,
+                @espacio_maximo_mb = ?,
+                @conexiones_maximas = ?,
+                @ttl_dias = ?,
+                @id_celula = ?,
+                @id_bd = @id_bd OUTPUT;
+
+            SELECT @id_bd AS id_bd;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (
+                subject,
+                payload["nombre_motor"],
+                payload["version_motor"],
+                payload["nombre_bd"],
+                payload["host"],
+                payload["puerto"],
+                payload["usuario_bd"],
+                payload["password_bd"],
+                ip,
+                payload.get("espacio_maximo_mb", 20),
+                payload.get("conexiones_maximas", 5),
+                payload.get("ttl_dias", 30),
+                payload.get("id_celula"),
+            ),
+            procedure_name="sp_CrearBD",
+        )
+        row = self._first_row(result.rows, "sp_CrearBD")
+        return self._read_string(row, "id_bd", "BaseDatosId", "database_id")
 
     def provision_database(self, subject: str) -> None:
-        """Provision database resources through the SQL Server layer.
+        """Kept for older callers; explicit POST /databases uses create_database."""
 
-        Args:
-            subject: Canonical subject identifier.
-        """
+        raise RepositoryMappingError("Use create_database with sp_CrearBD parameters")
 
-        self._executor.execute(PROVISION_DATABASE_SP, {"UsuarioId": subject})
-
-    def get_database_credentials(self, subject: str) -> dict[str, str]:
-        """Fetch database credentials through the SQL Server layer.
-
-        Args:
-            subject: Canonical subject identifier.
-
-        Returns:
-            dict[str, str]: Database credential payload.
-        """
-
-        result = self._executor.execute(GET_DATABASE_CREDENTIALS_SP, {"UsuarioId": subject})
-        first_row = self._first_row(result.rows, GET_DATABASE_CREDENTIALS_SP)
-        credentials = {
-            str(key): str(value)
-            for key, value in first_row.items()
-            if value is not None
-        }
-        if not credentials:
-            raise RepositoryMappingError("Database credential procedure returned no values")
-        return credentials
-
-    # ------------------------------------------------------------------
-    # Database lifecycle management
-    # ------------------------------------------------------------------
+    def get_database_credentials(self, subject: str, database_id: str | None = None) -> dict[str, str]:
+        result = self._executor.execute_sql(
+            "EXEC sp_ObtenerCredenciales @id_bd = ?, @id_usuario = ?;",
+            (database_id, subject),
+            procedure_name="sp_ObtenerCredenciales",
+        )
+        row = self._first_row(result.rows, "sp_ObtenerCredenciales")
+        return {str(key): str(value) for key, value in row.items() if value is not None}
 
     def list_databases(self, subject: str) -> tuple[dict[str, Any], ...]:
-        """List the database instances owned by a subject.
-
-        Args:
-            subject: Canonical subject identifier.
-
-        Returns:
-            tuple[dict[str, Any], ...]: Raw rows describing each database.
-        """
-
-        result = self._executor.execute(LIST_DATABASES_SP, {"UsuarioId": subject})
+        result = self._executor.execute_sql(
+            "SELECT * FROM fn_BasesDeDatosPorUsuario(?);",
+            (subject,),
+            procedure_name="fn_BasesDeDatosPorUsuario",
+        )
         return result.rows
 
     def get_database(self, subject: str, database_id: str) -> Mapping[str, Any]:
-        """Fetch a single database instance scoped to its owner.
-
-        Args:
-            subject: Canonical subject identifier.
-            database_id: Database instance identifier.
-
-        Returns:
-            Mapping[str, Any]: Raw row describing the database.
-        """
-
-        result = self._executor.execute(
-            GET_DATABASE_SP,
-            {"UsuarioId": subject, "BaseDatosId": database_id},
+        result = self._executor.execute_sql(
+            "SELECT * FROM fn_ObtenerBD(?, ?);",
+            (database_id, subject),
+            procedure_name="fn_ObtenerBD",
         )
-        return self._first_row(result.rows, GET_DATABASE_SP)
+        return self._first_row(result.rows, "fn_ObtenerBD")
 
-    def delete_database(self, subject: str, database_id: str) -> None:
-        """Deprovision a database instance owned by the subject.
-
-        Args:
-            subject: Canonical subject identifier.
-            database_id: Database instance identifier.
-        """
-
-        self._executor.execute(
-            DELETE_DATABASE_SP,
-            {"UsuarioId": subject, "BaseDatosId": database_id},
+    def delete_database(self, subject: str, database_id: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_EliminarBD @id_bd = ?, @id_usuario = ?, @ip = ?;",
+            (database_id, subject, ip),
+            procedure_name="sp_EliminarBD",
         )
 
     def get_database_usage(self, subject: str, database_id: str) -> Mapping[str, Any]:
-        """Fetch storage/connection usage for a database instance.
+        database = dict(self.get_database(subject, database_id))
+        database["dias_restantes_ttl"] = self.get_ttl_days_remaining(database_id)
+        database["porcentaje_espacio_usado"] = self.get_space_percentage(database_id)
+        return database
 
-        Args:
-            subject: Canonical subject identifier.
-            database_id: Database instance identifier.
-
-        Returns:
-            Mapping[str, Any]: Raw usage row.
-        """
-
-        result = self._executor.execute(
-            GET_DATABASE_USAGE_SP,
-            {"UsuarioId": subject, "BaseDatosId": database_id},
-        )
-        return self._first_row(result.rows, GET_DATABASE_USAGE_SP)
-
-    def pause_database(self, subject: str, database_id: str) -> None:
-        """Pause a database instance (e.g. inactivity TTL policy).
-
-        Args:
-            subject: Canonical subject identifier.
-            database_id: Database instance identifier.
-        """
-
-        self._executor.execute(
-            PAUSE_DATABASE_SP,
-            {"UsuarioId": subject, "BaseDatosId": database_id},
+    def pause_database(self, subject: str, database_id: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_PausarBD @id_bd = ?, @id_usuario = ?, @ip = ?;",
+            (database_id, subject, ip),
+            procedure_name="sp_PausarBD",
         )
 
     def resume_database(self, subject: str, database_id: str) -> None:
-        """Resume a previously paused database instance.
+        """No SP de reanudar exists in the provided guide."""
 
-        Args:
-            subject: Canonical subject identifier.
-            database_id: Database instance identifier.
+        raise RepositoryMappingError("sp_ReanudarBD is not part of the database contract")
+
+    def register_activity(self, database_id: str, ttl_days: int = 30) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_RegistrarActividad @id_bd = ?, @dias_ttl = ?;",
+            (database_id, ttl_days),
+            procedure_name="sp_RegistrarActividad",
+        )
+
+    def update_space(
+        self,
+        database_id: str,
+        reported_space_mb: float,
+        ip: str | None,
+        ttl_days: int = 30,
+    ) -> bool:
+        sql = """
+            DECLARE @permitir_escritura BIT;
+
+            EXEC sp_ActualizarEspacio
+                @id_bd = ?,
+                @espacio_reportado_mb = ?,
+                @ip = ?,
+                @dias_ttl = ?,
+                @permitir_escritura = @permitir_escritura OUTPUT;
+
+            SELECT @permitir_escritura AS permitir_escritura;
         """
+        result = self._executor.execute_sql(
+            sql,
+            (database_id, reported_space_mb, ip, ttl_days),
+            procedure_name="sp_ActualizarEspacio",
+        )
+        row = self._first_row(result.rows, "sp_ActualizarEspacio")
+        return bool(self._read_optional_bool(row, "permitir_escritura"))
 
-        self._executor.execute(
-            RESUME_DATABASE_SP,
-            {"UsuarioId": subject, "BaseDatosId": database_id},
+    def validate_connection(self, database_id: str) -> bool:
+        sql = """
+            DECLARE @conexion_permitida BIT;
+
+            EXEC sp_ValidarConexion
+                @id_bd = ?,
+                @conexion_permitida = @conexion_permitida OUTPUT;
+
+            SELECT @conexion_permitida AS conexion_permitida;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (database_id,),
+            procedure_name="sp_ValidarConexion",
+        )
+        row = self._first_row(result.rows, "sp_ValidarConexion")
+        return bool(self._read_optional_bool(row, "conexion_permitida"))
+
+    def release_connection(self, database_id: str) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_LiberarConexion @id_bd = ?;",
+            (database_id,),
+            procedure_name="sp_LiberarConexion",
+        )
+
+    def get_ttl_days_remaining(self, database_id: str) -> int | None:
+        result = self._executor.execute_sql(
+            "SELECT fn_DiasRestantesTTL(?) AS dias_restantes;",
+            (database_id,),
+            procedure_name="fn_DiasRestantesTTL",
+        )
+        row = self._first_row(result.rows, "fn_DiasRestantesTTL")
+        value = self._first_value(row)
+        return int(value) if value is not None else None
+
+    def get_space_percentage(self, database_id: str) -> float | None:
+        result = self._executor.execute_sql(
+            "SELECT fn_PorcentajeEspacioUsado(?) AS porcentaje_usado;",
+            (database_id,),
+            procedure_name="fn_PorcentajeEspacioUsado",
+        )
+        row = self._first_row(result.rows, "fn_PorcentajeEspacioUsado")
+        value = self._first_value(row)
+        return float(value) if value is not None else None
+
+    def register_event(
+        self,
+        event: str,
+        subject: str | None,
+        database_id: str | None,
+        description: str,
+        ip: str | None,
+        result: str,
+        additional_data: str | None = None,
+    ) -> None:
+        self._executor.execute_sql(
+            """
+            EXEC sp_RegistrarEvento
+                @evento = ?,
+                @id_usuario = ?,
+                @id_bd = ?,
+                @descripcion = ?,
+                @ip = ?,
+                @resultado = ?,
+                @datos_adicionales = ?;
+            """,
+            (event, subject, database_id, description, ip, result, additional_data),
+            procedure_name="sp_RegistrarEvento",
         )
 
     # ------------------------------------------------------------------
-    # Administration
+    # Administration and read-only metrics
     # ------------------------------------------------------------------
 
-    def list_users(self) -> tuple[dict[str, Any], ...]:
-        """List all registered users for administrative oversight.
-
-        Returns:
-            tuple[dict[str, Any], ...]: Raw rows describing each user.
-        """
-
-        result = self._executor.execute(LIST_USERS_SP, {})
+    def list_users(
+        self,
+        requester_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[dict[str, Any], ...]:
+        result = self._executor.execute_sql(
+            "EXEC sp_ListarUsuarios @id_usuario_solicitante = ?, @pagina = ?, @tamano_pagina = ?;",
+            (requester_id, page, page_size),
+            procedure_name="sp_ListarUsuarios",
+        )
         return result.rows
 
-    def update_user_role(self, user_id: str, role: str) -> None:
-        """Update the role assigned to a user.
-
-        Args:
-            user_id: Canonical subject identifier of the target user.
-            role: New role to assign.
-        """
-
-        self._executor.execute(
-            UPDATE_USER_ROLE_SP,
-            {"UsuarioId": user_id, "Rol": role},
+    def update_user_role(
+        self,
+        requester_id: str,
+        user_id: str,
+        role: str,
+        ip: str | None = None,
+    ) -> None:
+        self._executor.execute_sql(
+            """
+            EXEC sp_ActualizarRolUsuario
+                @id_usuario_solicitante = ?,
+                @id_usuario_objetivo = ?,
+                @nuevo_rol = ?,
+                @ip = ?;
+            """,
+            (requester_id, user_id, role, ip),
+            procedure_name="sp_ActualizarRolUsuario",
         )
 
-    def list_all_databases(self) -> tuple[dict[str, Any], ...]:
-        """List every provisioned database across all users (admin view).
-
-        Returns:
-            tuple[dict[str, Any], ...]: Raw rows describing each database.
-        """
-
-        result = self._executor.execute(LIST_ALL_DATABASES_SP, {})
+    def list_all_databases(
+        self,
+        requester_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        status_filter: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        result = self._executor.execute_sql(
+            """
+            EXEC sp_ListarTodasLasBasesDatos
+                @id_usuario_solicitante = ?,
+                @pagina = ?,
+                @tamano_pagina = ?,
+                @estado_filtro = ?;
+            """,
+            (requester_id, page, page_size, status_filter),
+            procedure_name="sp_ListarTodasLasBasesDatos",
+        )
         return result.rows
 
     # ------------------------------------------------------------------
-    # Célula / service provisioning
+    # Celulas and services
     # ------------------------------------------------------------------
 
-    def create_celula(self, subject: str, name: str) -> Mapping[str, Any]:
-        """Create a new célula (team workspace) owned by the subject.
+    def create_celula(self, subject: str, name: str, ip: str | None = None) -> Mapping[str, Any]:
+        sql = """
+            DECLARE @id_celula UNIQUEIDENTIFIER;
 
-        Args:
-            subject: Canonical subject identifier of the owner.
-            name: Célula name, used to derive its subdomain slug.
+            EXEC sp_CrearCelula
+                @nombre_celula = ?,
+                @id_usuario = ?,
+                @ip = ?,
+                @id_celula = @id_celula OUTPUT;
 
-        Returns:
-            Mapping[str, Any]: Raw row describing the created célula.
+            SELECT @id_celula AS id_celula;
         """
-
-        result = self._executor.execute(
-            CREATE_CELULA_SP,
-            {"UsuarioId": subject, "Nombre": name},
+        result = self._executor.execute_sql(
+            sql,
+            (name, subject, ip),
+            procedure_name="sp_CrearCelula",
         )
-        return self._first_row(result.rows, CREATE_CELULA_SP)
+        row = dict(self._first_row(result.rows, "sp_CrearCelula"))
+        row.setdefault("nombre_celula", name)
+        row.setdefault("id_usuario", subject)
+        return row
 
     def list_celulas(self, subject: str) -> tuple[dict[str, Any], ...]:
-        """List células visible to the subject.
-
-        Args:
-            subject: Canonical subject identifier.
-
-        Returns:
-            tuple[dict[str, Any], ...]: Raw rows describing each célula.
-        """
-
-        result = self._executor.execute(LIST_CELULAS_SP, {"UsuarioId": subject})
+        result = self._executor.execute_sql(
+            "SELECT * FROM fn_MiCelula(?);",
+            (subject,),
+            procedure_name="fn_MiCelula",
+        )
         return result.rows
 
     def get_celula(self, subject: str, celula_id: str) -> Mapping[str, Any]:
-        """Fetch a single célula scoped to the requesting subject.
-
-        Args:
-            subject: Canonical subject identifier.
-            celula_id: Célula identifier.
-
-        Returns:
-            Mapping[str, Any]: Raw row describing the célula.
-        """
-
-        result = self._executor.execute(
-            GET_CELULA_SP,
-            {"UsuarioId": subject, "CelulaId": celula_id},
+        result = self._executor.execute_sql(
+            "SELECT * FROM fn_ObtenerCelula(?);",
+            (celula_id,),
+            procedure_name="fn_ObtenerCelula",
         )
-        return self._first_row(result.rows, GET_CELULA_SP)
+        return self._first_row(result.rows, "fn_ObtenerCelula")
 
     def register_celula_service(
         self,
@@ -395,90 +473,85 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         service_name: str,
         service_type: str,
         database_id: str | None,
+        port: int | None = None,
+        ip: str | None = None,
     ) -> Mapping[str, Any]:
-        """Register a subdomain-backed service under a célula.
+        sql = """
+            DECLARE @id_servicio UNIQUEIDENTIFIER;
 
-        Args:
-            subject: Canonical subject identifier of the requester.
-            celula_id: Célula identifier.
-            service_name: Service slug (e.g. "api", "auth", "payments").
-            service_type: Service classification (e.g. "frontend", "api").
-            database_id: Optional database instance backing the service.
+            EXEC sp_CrearServicio
+                @id_celula = ?,
+                @nombre_servicio = ?,
+                @puerto_interno = ?,
+                @id_bd = ?,
+                @id_usuario = ?,
+                @ip = ?,
+                @id_servicio = @id_servicio OUTPUT;
 
-        Returns:
-            Mapping[str, Any]: Raw row describing the registered service.
+            SELECT @id_servicio AS id_servicio;
         """
-
-        result = self._executor.execute(
-            REGISTER_CELULA_SERVICE_SP,
-            {
-                "UsuarioId": subject,
-                "CelulaId": celula_id,
-                "NombreServicio": service_name,
-                "TipoServicio": service_type,
-                "BaseDatosId": database_id,
-            },
+        result = self._executor.execute_sql(
+            sql,
+            (celula_id, service_name, port, database_id, subject, ip),
+            procedure_name="sp_CrearServicio",
         )
-        return self._first_row(result.rows, REGISTER_CELULA_SERVICE_SP)
+        row = dict(self._first_row(result.rows, "sp_CrearServicio"))
+        row.setdefault("id_celula", celula_id)
+        row.setdefault("nombre_servicio", service_name)
+        row.setdefault("tipo_servicio", service_type)
+        row.setdefault("id_bd", database_id)
+        return row
 
     def list_celula_services(self, subject: str, celula_id: str) -> tuple[dict[str, Any], ...]:
-        """List services registered under a célula.
-
-        Args:
-            subject: Canonical subject identifier.
-            celula_id: Célula identifier.
-
-        Returns:
-            tuple[dict[str, Any], ...]: Raw rows describing each service.
-        """
-
-        result = self._executor.execute(
-            LIST_CELULA_SERVICES_SP,
-            {"UsuarioId": subject, "CelulaId": celula_id},
+        result = self._executor.execute_sql(
+            "SELECT * FROM fn_ServiciosPorCelula(?);",
+            (celula_id,),
+            procedure_name="fn_ServiciosPorCelula",
         )
         return result.rows
 
     def delete_celula_service(self, subject: str, celula_id: str, service_id: str) -> None:
-        """Remove a service registered under a célula.
+        self.change_service_status(subject, service_id, "PAUSADO", None)
 
-        Args:
-            subject: Canonical subject identifier.
-            celula_id: Célula identifier.
-            service_id: Service identifier to remove.
-        """
-
-        self._executor.execute(
-            DELETE_CELULA_SERVICE_SP,
-            {"UsuarioId": subject, "CelulaId": celula_id, "ServicioId": service_id},
+    def change_service_status(
+        self,
+        subject: str,
+        service_id: str,
+        new_status: str,
+        ip: str | None,
+    ) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_CambiarEstadoServicio @id_servicio = ?, @nuevo_estado = ?, @id_usuario = ?, @ip = ?;",
+            (service_id, new_status, subject, ip),
+            procedure_name="sp_CambiarEstadoServicio",
         )
 
-    def _first_row(
-        self,
-        rows: tuple[dict[str, Any], ...],
-        procedure_name: str,
-    ) -> Mapping[str, Any]:
-        """Return the first result row or raise a sanitized mapping error."""
+    # ------------------------------------------------------------------
+    # Mapping helpers
+    # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalized(row: Mapping[str, Any]) -> dict[str, Any]:
+        return {str(key).lower(): value for key, value in row.items()}
+
+    def _first_row(self, rows: tuple[dict[str, Any], ...], procedure_name: str) -> Mapping[str, Any]:
         if not rows:
             raise RepositoryMappingError(f"{procedure_name} did not return a result row")
         return rows[0]
 
-    def _read_string(self, row: Mapping[str, Any], *keys: str) -> str:
-        """Read a required string field from a stored procedure row."""
+    def _first_value(self, row: Mapping[str, Any]) -> Any:
+        return next(iter(row.values()), None)
 
-        normalized = {key.lower(): value for key, value in row.items()}
+    def _read_string(self, row: Mapping[str, Any], *keys: str) -> str:
+        normalized = self._normalized(row)
         for key in keys:
             value = normalized.get(key.lower())
-            if isinstance(value, str) and value:
-                return value
             if value is not None:
                 return str(value)
-        raise RepositoryMappingError("Stored procedure result is missing the user identifier")
+        raise RepositoryMappingError("Stored procedure result is missing a required identifier")
 
     def _read_optional_bool(self, row: Mapping[str, Any], *keys: str) -> bool | None:
-        """Read an optional boolean field from a stored procedure row."""
-
-        normalized = {key.lower(): value for key, value in row.items()}
+        normalized = self._normalized(row)
         for key in keys:
             value = normalized.get(key.lower())
             if value is None:
@@ -487,34 +560,17 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
                 return value
             if isinstance(value, int):
                 return bool(value)
-            if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "si", "sí"}
+            return str(value).strip().lower() in {"1", "true", "yes", "si", "sí"}
         return None
 
     def _read_optional_string(self, row: Mapping[str, Any], *keys: str) -> str | None:
-        """Read an optional string field from a stored procedure row."""
-
-        normalized = {key.lower(): value for key, value in row.items()}
+        normalized = self._normalized(row)
         for key in keys:
             value = normalized.get(key.lower())
-            if value is None:
-                continue
-            if isinstance(value, str):
-                return value
-            return str(value)
+            if value is not None:
+                return str(value)
         return None
 
     def _read_permissions(self, row: Mapping[str, Any], *keys: str) -> list[str]:
-        """Read an optional permissions collection from a stored procedure row."""
-
-        normalized = {key.lower(): value for key, value in row.items()}
-        for key in keys:
-            value = normalized.get(key.lower())
-            if value is None:
-                continue
-            if isinstance(value, str):
-                return [item.strip() for item in value.split(",") if item.strip()]
-            if isinstance(value, (list, tuple)):
-                return [str(item) for item in value if item is not None]
-            return [str(value)]
-        return []
+        value = self._read_optional_string(row, *keys)
+        return [item.strip() for item in value.split(",") if item.strip()] if value else []

@@ -13,7 +13,7 @@ from typing import Any, Protocol
 class CelulaRepositoryProtocol(Protocol):
     """Protocol for Stored Procedure-backed célula orchestration."""
 
-    def create_celula(self, subject: str, name: str) -> Mapping[str, Any]:
+    def create_celula(self, subject: str, name: str, ip: str | None = None) -> Mapping[str, Any]:
         """Create a new célula owned by the subject."""
 
     def list_celulas(self, subject: str) -> tuple[dict[str, Any], ...]:
@@ -29,6 +29,8 @@ class CelulaRepositoryProtocol(Protocol):
         service_name: str,
         service_type: str,
         database_id: str | None,
+        port: int | None = None,
+        ip: str | None = None,
     ) -> Mapping[str, Any]:
         """Register a subdomain-backed service under a célula."""
 
@@ -37,3 +39,12 @@ class CelulaRepositoryProtocol(Protocol):
 
     def delete_celula_service(self, subject: str, celula_id: str, service_id: str) -> None:
         """Remove a service registered under a célula."""
+
+    def change_service_status(
+        self,
+        subject: str,
+        service_id: str,
+        new_status: str,
+        ip: str | None,
+    ) -> None:
+        """Change a service status through sp_CambiarEstadoServicio."""

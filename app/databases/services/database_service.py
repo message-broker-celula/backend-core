@@ -21,6 +21,8 @@ from app.databases.schemas.database_schemas import (
     DatabaseInstance,
     DatabaseStatus,
     DatabaseUsage,
+    UpdateDatabaseSpaceResponse,
+    ValidateConnectionResponse,
 )
 from app.repositories.exceptions.database_exceptions import (
     RepositoryMappingError,
@@ -44,11 +46,21 @@ class DatabaseService:
 
         self._repository = repository
 
-    def provision_database(self, subject: str) -> None:
-        """Provision an additional database instance for the subject."""
+    def create_database(
+        self,
+        subject: str,
+        payload: Mapping[str, Any],
+        ip: str | None,
+    ) -> DatabaseActionResponse:
+        """Create an additional database instance for the subject."""
 
-        self._repository.provision_database(subject)
-        logger.info("Database provisioned", extra={"subject": subject})
+        database_id = self._repository.create_database(subject, payload, ip)
+        logger.info("Database created", extra={"subject": subject, "database_id": database_id})
+        return DatabaseActionResponse(
+            database_id=database_id,
+            status=DatabaseStatus.ACTIVE,
+            detail="Database created",
+        )
 
     def list_databases(self, subject: str) -> list[DatabaseInstance]:
         """List the database instances owned by the subject."""
@@ -70,10 +82,15 @@ class DatabaseService:
             raise ResourceNotFoundError(f"Database '{database_id}' was not found") from exc
         return self._to_instance(row)
 
-    def delete_database(self, subject: str, database_id: str) -> DatabaseActionResponse:
+    def delete_database(
+        self,
+        subject: str,
+        database_id: str,
+        ip: str | None,
+    ) -> DatabaseActionResponse:
         """Deprovision a database instance owned by the subject."""
 
-        self._repository.delete_database(subject, database_id)
+        self._repository.delete_database(subject, database_id, ip)
         logger.info(
             "Database deleted",
             extra={"subject": subject, "database_id": database_id},
@@ -94,7 +111,7 @@ class DatabaseService:
                 subject alone.
         """
 
-        raw_credentials = self._repository.get_database_credentials(subject)
+        raw_credentials = self._repository.get_database_credentials(subject, database_id or "")
         return self._to_credentials(raw_credentials)
 
     def get_usage(self, subject: str, database_id: str) -> DatabaseUsage:
@@ -108,10 +125,15 @@ class DatabaseService:
             ) from exc
         return self._to_usage(database_id, row)
 
-    def pause_database(self, subject: str, database_id: str) -> DatabaseActionResponse:
+    def pause_database(
+        self,
+        subject: str,
+        database_id: str,
+        ip: str | None,
+    ) -> DatabaseActionResponse:
         """Pause a database instance."""
 
-        self._repository.pause_database(subject, database_id)
+        self._repository.pause_database(subject, database_id, ip)
         logger.info(
             "Database paused",
             extra={"subject": subject, "database_id": database_id},
@@ -135,6 +157,54 @@ class DatabaseService:
             status=DatabaseStatus.ACTIVE,
             detail="Database resumed",
         )
+
+    def register_activity(self, database_id: str, ttl_days: int = 30) -> DatabaseActionResponse:
+        """Refresh database TTL activity."""
+
+        self._repository.register_activity(database_id, ttl_days)
+        return DatabaseActionResponse(
+            database_id=database_id,
+            status=DatabaseStatus.ACTIVE,
+            detail="Database activity registered",
+        )
+
+    def update_space(
+        self,
+        database_id: str,
+        reported_space_mb: float,
+        ip: str | None,
+        ttl_days: int = 30,
+    ) -> UpdateDatabaseSpaceResponse:
+        """Report storage usage and return the database write decision."""
+
+        allowed = self._repository.update_space(database_id, reported_space_mb, ip, ttl_days)
+        return UpdateDatabaseSpaceResponse(permitir_escritura=allowed)
+
+    def validate_connection(self, database_id: str) -> ValidateConnectionResponse:
+        """Ask SQL Server whether another user DB connection can be opened."""
+
+        allowed = self._repository.validate_connection(database_id)
+        return ValidateConnectionResponse(conexion_permitida=allowed)
+
+    def release_connection(self, database_id: str) -> DatabaseActionResponse:
+        """Release one active user DB connection counter."""
+
+        self._repository.release_connection(database_id)
+        return DatabaseActionResponse(
+            database_id=database_id,
+            status=DatabaseStatus.ACTIVE,
+            detail="Database connection released",
+        )
+
+    def get_ttl_days_remaining(self, database_id: str) -> int | None:
+        """Read fn_DiasRestantesTTL."""
+
+        return self._repository.get_ttl_days_remaining(database_id)
+
+    def get_space_percentage(self, database_id: str) -> float | None:
+        """Read fn_PorcentajeEspacioUsado."""
+
+        return self._repository.get_space_percentage(database_id)
 
     # ------------------------------------------------------------------
     # Row -> DTO mapping helpers
@@ -182,11 +252,12 @@ class DatabaseService:
             or data.get("database"),
             username=data.get("username") or data.get("usuario"),
             password=data.get("password") or data.get("contrasena") or data.get("contraseña"),
+            algoritmo=data.get("algoritmo") or data.get("algorithm"),
             connection_string=data.get("connection_string") or data.get("cadenaconexion"),
             **{k: v for k, v in raw.items() if k.lower() not in {
                 "host", "servidor", "port", "puerto", "database_name", "basedatos",
                 "database", "username", "usuario", "password", "contrasena",
-                "contraseña", "connection_string", "cadenaconexion",
+                "contraseña", "algoritmo", "algorithm", "connection_string", "cadenaconexion",
             }},
         )
 
@@ -205,7 +276,7 @@ class DatabaseService:
             database_id=database_id,
             storage_limit_mb=limit_mb,
             storage_used_mb=used_mb,
-            storage_percentage=percentage,
+            storage_percentage=data.get("porcentaje_espacio_usado") or percentage,
             active_connections=data.get("active_connections") or data.get("conexionesactivas"),
             max_connections=data.get("max_connections") or data.get("maxconexiones"),
         )

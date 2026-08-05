@@ -27,9 +27,13 @@ class FakeAuthRepository:
         self,
         provider: str,
         identity: OAuthUserIdentity,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> OAuthRegistrationResult:
         self.provider = provider
         self.identity = identity
+        self.ip = ip
+        self.user_agent = user_agent
         return OAuthRegistrationResult(user_id="user-123")
 
     def provision_database(self, subject: str) -> None:
@@ -38,8 +42,28 @@ class FakeAuthRepository:
     def get_database_credentials(self, subject: str) -> dict[str, str]:
         return {"subject": subject}
 
-    def refresh_access_token(self, refresh_token: str) -> RefreshTokenResult:
+    def issue_refresh_token(
+        self,
+        subject: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> str:
+        self.issued_subject = subject
+        self.issue_ip = ip
+        self.issue_user_agent = user_agent
+        return "issued-refresh-token"
+
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        validity_days: int = 30,
+    ) -> RefreshTokenResult:
         self.refresh_token = refresh_token
+        self.refresh_ip = ip
+        self.refresh_user_agent = user_agent
         return RefreshTokenResult(
             subject="user-123",
             refresh_token="new-refresh-token",
@@ -47,31 +71,34 @@ class FakeAuthRepository:
             permissions=["read"],
         )
 
-    def revoke_refresh_token(self, refresh_token: str) -> None:
+    def revoke_refresh_token(self, refresh_token: str, ip: str | None = None) -> None:
         self.revoked_token = refresh_token
+        self.revoked_ip = ip
 
-    def revoke_all_refresh_tokens(self, subject: str) -> None:
+    def revoke_all_refresh_tokens(self, subject: str, ip: str | None = None) -> None:
         self.revoked_subject = subject
+        self.revoked_all_ip = ip
 
 
 class FakeExecutor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
 
-    def execute(
+    def execute_sql(
         self,
-        procedure_name: str,
-        parameters: dict[str, object] | None = None,
+        sql: str,
+        parameters: tuple[object, ...] = (),
         *,
+        procedure_name: str,
         timeout: int | None = None,
     ) -> StoredProcedureExecutionResult:
-        self.calls.append((procedure_name, parameters or {}))
+        self.calls.append((procedure_name, {"sql": sql, "parameters": parameters}))
         return StoredProcedureExecutionResult(
             row_count=1,
             rows=(
                 {
-                    "UsuarioId": "db-user-1",
-                    "PrimerInicio": 1,
+                    "id_usuario": "db-user-1",
+                    "es_nuevo": 1,
                 },
             ),
         )
@@ -121,21 +148,31 @@ class AuthServiceTests(unittest.TestCase):
             verified_email=True,
         )
 
-        response = service.authenticate_oauth_user(provider="google", identity=identity)
+        response = service.authenticate_oauth_user(
+            provider="google",
+            identity=identity,
+            ip="127.0.0.1",
+            user_agent="test-agent",
+        )
         payload = service.validate_token(response.access_token)
 
         self.assertEqual(repository.provider, "google")
         self.assertEqual(repository.identity.provider_user_id, "google-user")
-        self.assertEqual(repository.provisioned_subject, "user-123")
+        self.assertEqual(repository.ip, "127.0.0.1")
+        self.assertEqual(repository.user_agent, "test-agent")
+        self.assertEqual(repository.issued_subject, "user-123")
+        self.assertEqual(response.refresh_token, "issued-refresh-token")
         self.assertEqual(payload.sub, "user-123")
 
     def test_refresh_access_token_rotates_refresh_token_and_issues_new_access_token(self) -> None:
         repository = FakeAuthRepository()
         service = AuthService(repository=repository)
 
-        response = service.refresh_access_token("refresh-token")
+        response = service.refresh_access_token("refresh-token", "127.0.0.1", "test-agent")
 
         self.assertEqual(repository.refresh_token, "refresh-token")
+        self.assertEqual(repository.refresh_ip, "127.0.0.1")
+        self.assertEqual(repository.refresh_user_agent, "test-agent")
         self.assertEqual(response.refresh_token, "new-refresh-token")
         self.assertEqual(service.validate_token(response.access_token).sub, "user-123")
 
@@ -263,8 +300,8 @@ class SQLServerRepositoryTests(unittest.TestCase):
 
         self.assertEqual(result.user_id, "db-user-1")
         self.assertTrue(result.first_login)
-        self.assertEqual(executor.calls[0][0], "sp_RegistrarOAuthUsuario")
-        self.assertEqual(executor.calls[0][1]["UsuarioExternoId"], "42")
+        self.assertEqual(executor.calls[0][0], "sp_RegistrarOAuth")
+        self.assertEqual(executor.calls[0][1]["parameters"][1], "42")
 
 
 if __name__ == "__main__":

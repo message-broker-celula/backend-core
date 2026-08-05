@@ -36,7 +36,7 @@ class UpdateUserRoleRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    role: str = Field(..., min_length=1, max_length=64)
+    role: str = Field(..., pattern="^(ESTUDIANTE|ADMIN|estudiante|admin)$")
 
 
 class AdminDatabaseListResponse(BaseModel):

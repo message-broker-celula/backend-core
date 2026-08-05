@@ -27,23 +27,46 @@ class AdminService:
 
         self._repository = repository
 
-    def list_users(self) -> list[AdminUserSummary]:
+    def list_users(
+        self,
+        requester_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[AdminUserSummary]:
         """List all registered users."""
 
-        rows = self._repository.list_users()
+        rows = self._repository.list_users(requester_id, page, page_size)
         return [self._to_user_summary(row) for row in rows]
 
-    def update_user_role(self, user_id: str, role: str) -> AdminUserSummary:
+    def update_user_role(
+        self,
+        requester_id: str,
+        user_id: str,
+        role: str,
+        ip: str | None = None,
+    ) -> AdminUserSummary:
         """Update the role assigned to a user."""
 
-        self._repository.update_user_role(user_id, role)
+        normalized_role = role.upper()
+        self._repository.update_user_role(requester_id, user_id, normalized_role, ip)
         logger.info("User role updated", extra={"user_id": user_id, "role": role})
-        return AdminUserSummary(user_id=user_id, role=role)
+        return AdminUserSummary(user_id=user_id, role=normalized_role)
 
-    def list_all_databases(self) -> list[DatabaseInstance]:
+    def list_all_databases(
+        self,
+        requester_id: str,
+        page: int = 1,
+        page_size: int = 50,
+        status_filter: str | None = None,
+    ) -> list[DatabaseInstance]:
         """List every provisioned database across all users."""
 
-        rows = self._repository.list_all_databases()
+        rows = self._repository.list_all_databases(
+            requester_id,
+            page,
+            page_size,
+            status_filter.upper() if status_filter else None,
+        )
         return [self._to_database_instance(row) for row in rows]
 
     @staticmethod
