@@ -67,6 +67,6 @@ jobs:
 
             docker pull $BACKEND_IMAGE
             cd /srv/projects/backend-core
-            docker compose -f docker-compose.yml up -d --no-deps --force-recreate -v
+            docker compose -f docker-compose.yml up -d --no-deps --force-recreate --verbose
             docker image prune -f
             echo "Despliegue completado con éxito: $(date)"
