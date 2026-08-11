@@ -67,9 +67,9 @@ Implementa el esquema de direccionamiento `[celula].andrescortes.dev` y
 
 El campo `domain` se deriva automáticamente si el SP no lo devuelve
 (`{nombre}.andrescortes.dev` para células, `{servicio}.{celula}.{dominio raíz}`
-para servicios). El dominio raíz se puede parametrizar agregando
-`root_domain` a `AppSettings`/`Settings` en `app/core/config.py`; por ahora usa
-`andrescortes.dev` como valor por defecto.
+para servicios). El dominio raíz es parametrizable vía la variable de entorno
+`APP_ROOT_DOMAIN` (`AppSettings.root_domain` en `app/core/config.py`); si no se
+define, usa `andrescortes.dev` como valor por defecto.
 
 ## Pendiente / fuera de alcance de este cambio
 

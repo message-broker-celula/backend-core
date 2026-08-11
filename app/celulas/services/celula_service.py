@@ -32,7 +32,7 @@ class CelulaOrchestrationService:
 
     @property
     def _root_domain(self) -> str:
-        return getattr(settings.app, "root_domain", "andrescortes.dev")
+        return settings.app.root_domain
 
     def create_celula(self, subject: str, name: str, ip: str | None = None) -> Celula:
         """Create a new célula workspace owned by the subject."""
