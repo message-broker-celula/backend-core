@@ -15,6 +15,7 @@ from typing import Any
 from app.databases.interfaces.database_repository import (
     DatabaseManagementRepositoryProtocol,
 )
+from app.databases.row_mapping import normalize_row, pick_first, row_to_database_instance
 from app.databases.schemas.database_schemas import (
     DatabaseActionResponse,
     DatabaseCredentials,
@@ -212,32 +213,10 @@ class DatabaseService:
 
     @staticmethod
     def _normalized(row: Mapping[str, Any]) -> dict[str, Any]:
-        return {str(key).lower(): value for key, value in row.items()}
+        return normalize_row(row)
 
     def _to_instance(self, row: Mapping[str, Any]) -> DatabaseInstance:
-        data = self._normalized(row)
-        status_value = str(
-            data.get("status") or data.get("estado") or DatabaseStatus.UNKNOWN.value
-        ).lower()
-        try:
-            status = DatabaseStatus(status_value)
-        except ValueError:
-            status = DatabaseStatus.UNKNOWN
-
-        return DatabaseInstance(
-            database_id=str(
-                data.get("database_id")
-                or data.get("basedatosid")
-                or data.get("id")
-                or ""
-            ),
-            name=data.get("name") or data.get("nombre"),
-            status=status,
-            created_at=data.get("created_at") or data.get("fechacreacion"),
-            ttl_expires_at=data.get("ttl_expires_at") or data.get("fechaexpiracion"),
-            storage_limit_mb=data.get("storage_limit_mb") or data.get("limitealmacenamientomb"),
-            storage_used_mb=data.get("storage_used_mb") or data.get("almacenamientousadomb"),
-        )
+        return row_to_database_instance(row)
 
     def _to_credentials(self, raw: Mapping[str, str]) -> DatabaseCredentials:
         data = self._normalized(raw)
@@ -248,35 +227,47 @@ class DatabaseService:
             host=data.get("host") or data.get("servidor"),
             port=port,
             database_name=data.get("database_name")
+            or data.get("nombre_bd")
             or data.get("basedatos")
             or data.get("database"),
-            username=data.get("username") or data.get("usuario"),
-            password=data.get("password") or data.get("contrasena") or data.get("contraseña"),
+            username=data.get("username") or data.get("usuario_bd") or data.get("usuario"),
+            password=(
+                data.get("password")
+                or data.get("password_bd")
+                or data.get("contrasena")
+                or data.get("contraseña")
+            ),
             algoritmo=data.get("algoritmo") or data.get("algorithm"),
             connection_string=data.get("connection_string") or data.get("cadenaconexion"),
             **{k: v for k, v in raw.items() if k.lower() not in {
-                "host", "servidor", "port", "puerto", "database_name", "basedatos",
-                "database", "username", "usuario", "password", "contrasena",
-                "contraseña", "algoritmo", "algorithm", "connection_string", "cadenaconexion",
+                "host", "servidor", "port", "puerto", "database_name", "nombre_bd", "basedatos",
+                "database", "username", "usuario_bd", "usuario", "password", "password_bd",
+                "contrasena", "contraseña", "algoritmo", "algorithm", "connection_string", "cadenaconexion",
             }},
         )
 
     def _to_usage(self, database_id: str, row: Mapping[str, Any]) -> DatabaseUsage:
         data = self._normalized(row)
-        limit_mb = data.get("storage_limit_mb") or data.get("limitealmacenamientomb")
-        used_mb = data.get("storage_used_mb") or data.get("almacenamientousadomb")
+        limit_mb = pick_first(data, "storage_limit_mb", "espacio_maximo_mb", "limitealmacenamientomb")
+        used_mb = pick_first(data, "storage_used_mb", "espacio_actual_mb", "almacenamientousadomb")
         percentage = None
-        if limit_mb and used_mb:
+        if limit_mb and used_mb is not None:
             try:
                 percentage = round((float(used_mb) / float(limit_mb)) * 100, 2)
             except (TypeError, ValueError, ZeroDivisionError):
                 percentage = None
 
+        storage_percentage = pick_first(data, "porcentaje_espacio_usado")
+        if storage_percentage is None:
+            storage_percentage = percentage
+
         return DatabaseUsage(
             database_id=database_id,
             storage_limit_mb=limit_mb,
             storage_used_mb=used_mb,
-            storage_percentage=data.get("porcentaje_espacio_usado") or percentage,
-            active_connections=data.get("active_connections") or data.get("conexionesactivas"),
-            max_connections=data.get("max_connections") or data.get("maxconexiones"),
+            storage_percentage=storage_percentage,
+            active_connections=pick_first(
+                data, "active_connections", "conexiones_actuales", "conexionesactivas"
+            ),
+            max_connections=pick_first(data, "max_connections", "conexiones_maximas", "maxconexiones"),
         )

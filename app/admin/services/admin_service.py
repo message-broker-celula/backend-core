@@ -14,7 +14,8 @@ from typing import Any
 
 from app.admin.interfaces.admin_repository import AdminRepositoryProtocol
 from app.admin.schemas.admin_schemas import AdminUserSummary
-from app.databases.schemas.database_schemas import DatabaseInstance, DatabaseStatus
+from app.databases.row_mapping import row_to_database_instance
+from app.databases.schemas.database_schemas import DatabaseInstance
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,9 @@ class AdminService:
     def _to_user_summary(self, row: Mapping[str, Any]) -> AdminUserSummary:
         data = self._normalized(row)
         return AdminUserSummary(
-            user_id=str(data.get("user_id") or data.get("usuarioid") or data.get("id") or ""),
+            user_id=str(
+                data.get("user_id") or data.get("id_usuario") or data.get("usuarioid") or data.get("id") or ""
+            ),
             email=data.get("email") or data.get("correo"),
             name=data.get("name") or data.get("nombre"),
             role=data.get("role") or data.get("rol"),
@@ -84,26 +87,4 @@ class AdminService:
         )
 
     def _to_database_instance(self, row: Mapping[str, Any]) -> DatabaseInstance:
-        data = self._normalized(row)
-        status_value = str(
-            data.get("status") or data.get("estado") or DatabaseStatus.UNKNOWN.value
-        ).lower()
-        try:
-            status = DatabaseStatus(status_value)
-        except ValueError:
-            status = DatabaseStatus.UNKNOWN
-
-        return DatabaseInstance(
-            database_id=str(
-                data.get("database_id")
-                or data.get("basedatosid")
-                or data.get("id")
-                or ""
-            ),
-            name=data.get("name") or data.get("nombre"),
-            status=status,
-            created_at=data.get("created_at") or data.get("fechacreacion"),
-            ttl_expires_at=data.get("ttl_expires_at") or data.get("fechaexpiracion"),
-            storage_limit_mb=data.get("storage_limit_mb") or data.get("limitealmacenamientomb"),
-            storage_used_mb=data.get("storage_used_mb") or data.get("almacenamientousadomb"),
-        )
+        return row_to_database_instance(row)

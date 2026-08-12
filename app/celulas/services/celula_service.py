@@ -119,8 +119,10 @@ class CelulaOrchestrationService:
 
     def _to_celula(self, row: Mapping[str, Any], fallback_owner: str | None = None) -> Celula:
         data = self._normalized(row)
-        name = str(data.get("name") or data.get("nombre") or "")
-        celula_id = str(data.get("celula_id") or data.get("celulaid") or data.get("id") or "")
+        name = str(data.get("name") or data.get("nombre_celula") or data.get("nombre") or "")
+        celula_id = str(
+            data.get("celula_id") or data.get("id_celula") or data.get("celulaid") or data.get("id") or ""
+        )
         domain = data.get("domain") or data.get("dominio") or (
             f"{name}.{self._root_domain}" if name else None
         )
@@ -129,6 +131,7 @@ class CelulaOrchestrationService:
             name=name,
             domain=domain,
             owner_subject=data.get("owner_subject")
+            or data.get("id_usuario")
             or data.get("usuarioid")
             or fallback_owner,
         )
@@ -141,10 +144,14 @@ class CelulaOrchestrationService:
         fallback_type: CelulaServiceType | None = None,
     ) -> CelulaService:
         data = self._normalized(row)
-        service_name = str(data.get("service_name") or data.get("nombreservicio") or fallback_name or "")
-        celula_name = data.get("celula_name") or data.get("nombrecelula")
+        service_name = str(
+            data.get("service_name") or data.get("nombre_servicio") or data.get("nombreservicio")
+            or fallback_name or ""
+        )
+        celula_name = data.get("celula_name") or data.get("nombre_celula") or data.get("nombrecelula")
         type_value = str(
             data.get("service_type")
+            or data.get("tipo_servicio")
             or data.get("tiposervicio")
             or (fallback_type.value if fallback_type else CelulaServiceType.OTHER.value)
         ).lower()
@@ -159,11 +166,12 @@ class CelulaOrchestrationService:
 
         return CelulaService(
             service_id=str(
-                data.get("service_id") or data.get("servicioid") or data.get("id") or ""
+                data.get("service_id") or data.get("id_servicio") or data.get("servicioid")
+                or data.get("id") or ""
             ),
             celula_id=celula_id,
             service_name=service_name,
             service_type=service_type,
             domain=domain,
-            database_id=data.get("database_id") or data.get("basedatosid"),
+            database_id=data.get("database_id") or data.get("id_bd") or data.get("basedatosid"),
         )
