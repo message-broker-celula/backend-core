@@ -102,8 +102,15 @@ class StoredProcedureExecutor(StoredProcedureExecutorProtocol):
         try:
             with connection:
                 cursor = connection.cursor()
-                cursor.timeout = timeout or self._timeout
-    
+                try:
+                    # Per-cursor timeout isn't exposed by every pyodbc/unixODBC
+                    # build (AttributeError on some Linux installs). The
+                    # connection-level timeout passed to pyodbc.connect() above
+                    # already bounds the connection attempt, so this is best-effort.
+                    cursor.timeout = timeout or self._timeout
+                except AttributeError:
+                    pass
+
                 try:
                     cursor.execute(sql, list(parameters))
     
