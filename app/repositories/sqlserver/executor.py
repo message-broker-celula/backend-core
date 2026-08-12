@@ -140,6 +140,7 @@ class StoredProcedureExecutor(StoredProcedureExecutorProtocol):
             logger.error(
                 "Unexpected stored procedure execution failure",
                 extra={"procedure_name": procedure_name},
+                exc_info=exc,
             )
             raise StoredProcedureExecutionError(procedure_name=procedure_name) from exc
     

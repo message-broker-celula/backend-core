@@ -303,7 +303,7 @@ def google_callback(
     except BusinessRuleViolationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except (AuthenticationError, DatabaseIntegrationError) as exc:
-        logger.error("Google OAuth authentication failed", extra={"provider": "google"})
+        logger.error("Google OAuth authentication failed", extra={"provider": "google"}, exc_info=exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service unavailable",
@@ -473,7 +473,7 @@ def github_callback(
     except BusinessRuleViolationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
     except (AuthenticationError, DatabaseIntegrationError) as exc:
-        logger.error("GitHub OAuth authentication failed", extra={"provider": "github"})
+        logger.error("GitHub OAuth authentication failed", extra={"provider": "github"}, exc_info=exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service unavailable",
