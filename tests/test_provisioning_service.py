@@ -3,6 +3,7 @@ import pytest
 from app.provisioning.exceptions.provisioning_exceptions import (
     PortAllocationExhaustedError,
     PortInUseError,
+    ProvisionerRequestError,
 )
 from app.provisioning.interfaces.provisioner_client import ProvisionedContainer
 from app.provisioning.services.provisioning_service import DatabaseProvisioningService
@@ -23,8 +24,9 @@ class FakePortAllocator:
 
 
 class FakeProvisionerClient:
-    def __init__(self, fail_ports: set[int] | None = None) -> None:
+    def __init__(self, fail_ports: set[int] | None = None, timeout_ports: set[int] | None = None) -> None:
         self.fail_ports = fail_ports or set()
+        self.timeout_ports = timeout_ports or set()
         self.created: list[dict[str, object]] = []
         self.stopped: list[str] = []
         self.started: list[str] = []
@@ -34,6 +36,8 @@ class FakeProvisionerClient:
         self.created.append({"engine": engine, "host_port": host_port, "name": name})
         if host_port in self.fail_ports:
             raise PortInUseError(f"port {host_port} taken")
+        if host_port in self.timeout_ports:
+            raise ProvisionerRequestError(f"request to create port {host_port} timed out")
         return ProvisionedContainer(container_name=name, ready=True)
 
     def stop_container(self, name: str) -> None:
@@ -94,6 +98,21 @@ def test_provision_raises_when_port_allocation_exhausted() -> None:
 
     with pytest.raises(PortAllocationExhaustedError):
         service.provision(engine="MYSQL", version="8.4", requested_name="db")
+
+
+def test_provision_cleans_up_and_reraises_on_non_conflict_failure() -> None:
+    # Simulates the real production case: the sidecar's HTTP response is
+    # lost (e.g. a client-side timeout on a slow first-boot MySQL init)
+    # after it already created the container -- the backend can't tell
+    # whether the container exists, so it must attempt a best-effort
+    # removal for the port it just tried instead of silently leaking it.
+    client = FakeProvisionerClient(timeout_ports={30000})
+    service = _service(client, FakePortAllocator([30000]))
+
+    with pytest.raises(ProvisionerRequestError):
+        service.provision(engine="MYSQL", version="8.4", requested_name="db")
+
+    assert client.removed == ["dbinst-30000"]
 
 
 def test_deprovision_removes_container_derived_from_port() -> None:

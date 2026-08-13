@@ -107,6 +107,24 @@ class DatabaseProvisioningService:
                 logger.warning("Port %s already in use, retrying allocation", port)
                 last_error = exc
                 continue
+            except Exception:
+                # The sidecar call itself failed (e.g. a client-side request
+                # timeout on a slow first-boot MySQL init) -- we cannot tell
+                # whether the container was actually created before the
+                # response was lost, so attempt a best-effort cleanup for
+                # the port we just tried before propagating the real error.
+                # remove_container is idempotent, so this is safe even if
+                # nothing was ever created.
+                logger.error(
+                    "Provisioning request failed; attempting cleanup for port %s "
+                    "in case the container was created before the response was lost",
+                    port,
+                )
+                try:
+                    self._client.remove_container(name)
+                except Exception as cleanup_exc:
+                    logger.error("Failed to clean up possibly-orphaned container", exc_info=cleanup_exc)
+                raise
 
             return ProvisionedDatabase(
                 host=self._public_host,

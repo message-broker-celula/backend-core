@@ -176,7 +176,12 @@ class Settings(BaseSettings):
     # by default since backend-core-backend reaches it over internal_net.
     provisioning_base_url: str = Field(default="http://provisioner:9000")
     provisioning_shared_secret: str = Field(default="")
-    provisioning_request_timeout_seconds: int = Field(default=45)
+    # A fresh volume means MySQL's first-boot init (not just image pull) can
+    # itself take 20-30s -- confirmed in production that 45s was too tight
+    # against the sidecar's own 30s readiness budget plus HTTP/creation
+    # overhead, causing the client to give up on requests that actually
+    # succeeded server-side moments later.
+    provisioning_request_timeout_seconds: int = Field(default=90)
     # VPS's externally-reachable address (raw TCP, no nginx/TLS involved) --
     # NOT the sidecar's internal Docker hostname. Returned to end users as
     # the `host` they connect their own apps to.
