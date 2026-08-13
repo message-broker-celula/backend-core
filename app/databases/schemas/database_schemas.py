@@ -93,6 +93,8 @@ class DatabaseInstance(BaseModel):
     database_id: str
     name: str | None = None
     status: DatabaseStatus = DatabaseStatus.UNKNOWN
+    host: str | None = None
+    port: int | None = None
     created_at: datetime | None = None
     ttl_expires_at: datetime | None = None
     storage_limit_mb: float | None = None

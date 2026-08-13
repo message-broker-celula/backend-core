@@ -66,10 +66,13 @@ def row_to_database_instance(row: Mapping[str, Any]) -> DatabaseInstance:
     """Map a raw SQL Server row into a `DatabaseInstance` DTO."""
 
     data = normalize_row(row)
+    port_raw = pick_first(data, "port", "puerto")
     return DatabaseInstance(
         database_id=str(pick_first(data, "database_id", "id_bd", "basedatosid", "id") or ""),
         name=pick_first(data, "name", "nombre_bd", "nombre"),
         status=parse_database_status(pick_first(data, "status", "estado")),
+        host=pick_first(data, "host", "servidor"),
+        port=int(port_raw) if port_raw is not None else None,
         created_at=pick_first(data, "created_at", "fecha_creacion", "fechacreacion"),
         ttl_expires_at=pick_first(data, "ttl_expires_at", "fecha_expiracion", "fechaexpiracion"),
         storage_limit_mb=pick_first(data, "storage_limit_mb", "espacio_maximo_mb", "limitealmacenamientomb"),
