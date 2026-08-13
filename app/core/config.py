@@ -11,6 +11,7 @@ class AppSettings(BaseModel):
     debug: bool
     trusted_hosts: list[str]
     root_domain: str
+    frontend_url: str
 
 
 class CorsSettings(BaseModel):
@@ -91,6 +92,10 @@ class Settings(BaseSettings):
     app_debug: bool = Field(default=True)
     app_trusted_hosts: str = Field(default="localhost,127.0.0.1,testserver")
     app_root_domain: str = Field(default="andrescortes.dev")
+    # Where the OAuth callback redirects the browser after issuing a token --
+    # the frontend owns a route at {app_frontend_url}/auth/callback that reads
+    # ?access_token=... (and ?error=... on failure) from the query string.
+    app_frontend_url: str = Field(default="http://localhost:5173")
 
     # CORS
     cors_allowed_origins: str = Field(default="http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:8000")
@@ -162,6 +167,7 @@ class Settings(BaseSettings):
             debug=self.app_debug,
             trusted_hosts=trusted_hosts,
             root_domain=self.app_root_domain,
+            frontend_url=self.app_frontend_url.rstrip("/"),
         )
 
     @property

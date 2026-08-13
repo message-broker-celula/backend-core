@@ -80,7 +80,16 @@ def _delete_state_cookie(response: JSONResponse, provider: str) -> None:
 
 
 def _set_refresh_token_cookie(response: JSONResponse, refresh_token: str | None) -> None:
-    """Attach the refresh token as an httpOnly cookie when SQL Server issued one."""
+    """Attach the refresh token as an httpOnly cookie when SQL Server issued one.
+
+    Deliberately `SameSite=None` (not the `oauth_state_cookie_samesite` config
+    used for the CSRF state cookie): the state cookie is only ever read back
+    on the same top-level redirect chain that set it (same-origin, `Lax` is
+    fine), but this cookie must be sent by the browser on a cross-subdomain
+    `fetch(..., {credentials: "include"})` from the frontend's own origin
+    (e.g. mbro.andrescortes.dev calling api.mbro.andrescortes.dev) -- that
+    requires `SameSite=None; Secure` regardless of the state-cookie setting.
+    """
 
     if not refresh_token:
         return
@@ -88,8 +97,8 @@ def _set_refresh_token_cookie(response: JSONResponse, refresh_token: str | None)
         key=_REFRESH_TOKEN_COOKIE_NAME,
         value=refresh_token,
         httponly=True,
-        secure=settings.oauth.state_cookie_secure,
-        samesite=settings.oauth.state_cookie_samesite,
+        secure=True,
+        samesite="none",
         max_age=settings.jwt.refresh_expire_minutes * 60,
     )
 
@@ -99,9 +108,37 @@ def _delete_refresh_token_cookie(response: JSONResponse) -> None:
 
     response.delete_cookie(
         key=_REFRESH_TOKEN_COOKIE_NAME,
-        secure=settings.oauth.state_cookie_secure,
-        samesite=settings.oauth.state_cookie_samesite,
+        secure=True,
+        samesite="none",
     )
+
+
+def _frontend_success_redirect(access_token: str) -> RedirectResponse:
+    """Redirect the browser back to the frontend with the access token.
+
+    The callback is reached via a top-level browser navigation (the OAuth
+    provider redirects here directly) -- the frontend's own JS never sees a
+    fetch response, so the token has to travel back via redirect, not JSON.
+    The frontend owns a client-side route at `{FRONTEND_URL}/auth/callback`
+    that reads `access_token` from the query string, stores it in memory,
+    and should immediately scrub it from the visible URL/history via
+    `history.replaceState`.
+    """
+
+    url = f"{settings.app.frontend_url}/auth/callback?access_token={access_token}&token_type=bearer"
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+def _frontend_error_redirect(error_code: str, description: str) -> RedirectResponse:
+    """Redirect the browser back to the frontend with an error, instead of a raw API error page."""
+
+    from urllib.parse import quote
+
+    url = (
+        f"{settings.app.frontend_url}/auth/callback"
+        f"?error={quote(error_code)}&error_description={quote(description)}"
+    )
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
 
 def _get_optional_current_user(
@@ -148,8 +185,14 @@ def google_auth(
 
 @router.get(
     "/google/callback",
-    response_model=AccessTokenResponse,
     summary="Complete Google OAuth callback",
+    description=(
+        "Reached via a top-level browser redirect from Google, not a "
+        "frontend fetch call. Always responds with a 302 back to "
+        "`{FRONTEND_URL}/auth/callback`, carrying either `access_token` "
+        "(success) or `error`/`error_description` (failure) as query params, "
+        "and sets the refresh_token cookie on success."
+    ),
 )
 def google_callback(
     request: Request,
@@ -158,29 +201,21 @@ def google_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
-) -> JSONResponse:
+) -> RedirectResponse:
     """Handle the Google OAuth callback."""
 
     if error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth authorization denied",
-        )
+        return _frontend_error_redirect("access_denied", "OAuth authorization denied")
     if not code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing OAuth authorization code",
-        )
+        return _frontend_error_redirect("missing_code", "Missing OAuth authorization code")
 
     cookie_state = request.cookies.get(_cookie_key("google"))
 
     try:
         oauth_service.validate_state("google", state, cookie_state)
     except OAuthStateError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid OAuth state",
-        ) from exc
+        logger.warning("Google OAuth state validation failed", exc_info=exc)
+        return _frontend_error_redirect("invalid_state", "Invalid OAuth state")
 
     try:
         identity = oauth_service.exchange_code_for_identity(
@@ -189,10 +224,8 @@ def google_callback(
             redirect_uri=settings.oauth.google.redirect_uri,
         )
     except OAuthStateError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="OAuth provider validation failed",
-        ) from exc
+        logger.error("Google OAuth provider exchange failed", exc_info=exc)
+        return _frontend_error_redirect("provider_error", "OAuth provider validation failed")
 
     try:
         response_data = service.authenticate_oauth_user(
@@ -202,14 +235,12 @@ def google_callback(
             user_agent=request.headers.get("user-agent"),
         )
     except BusinessRuleViolationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
+        return _frontend_error_redirect("business_rule_violation", exc.detail)
     except (AuthenticationError, DatabaseIntegrationError) as exc:
         logger.error("Google OAuth authentication failed", extra={"provider": "google"}, exc_info=exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable",
-        ) from exc
-    response = JSONResponse(content=response_data.model_dump(mode="json"))
+        return _frontend_error_redirect("service_unavailable", "Authentication service unavailable")
+
+    response = _frontend_success_redirect(response_data.access_token)
     _set_refresh_token_cookie(response, response_data.refresh_token)
     _delete_state_cookie(response, "google")
     return response
@@ -242,8 +273,14 @@ def github_auth(
 
 @router.get(
     "/github/callback",
-    response_model=AccessTokenResponse,
     summary="Complete GitHub OAuth callback",
+    description=(
+        "Reached via a top-level browser redirect from GitHub, not a "
+        "frontend fetch call. Always responds with a 302 back to "
+        "`{FRONTEND_URL}/auth/callback`, carrying either `access_token` "
+        "(success) or `error`/`error_description` (failure) as query params, "
+        "and sets the refresh_token cookie on success."
+    ),
 )
 def github_callback(
     request: Request,
@@ -252,29 +289,21 @@ def github_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
-) -> JSONResponse:
+) -> RedirectResponse:
     """Handle the GitHub OAuth callback."""
 
     if error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth authorization denied",
-        )
+        return _frontend_error_redirect("access_denied", "OAuth authorization denied")
     if not code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing OAuth authorization code",
-        )
+        return _frontend_error_redirect("missing_code", "Missing OAuth authorization code")
 
     cookie_state = request.cookies.get(_cookie_key("github"))
 
     try:
         oauth_service.validate_state("github", state, cookie_state)
     except OAuthStateError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid OAuth state",
-        ) from exc
+        logger.warning("GitHub OAuth state validation failed", exc_info=exc)
+        return _frontend_error_redirect("invalid_state", "Invalid OAuth state")
 
     try:
         identity = oauth_service.exchange_code_for_identity(
@@ -283,10 +312,8 @@ def github_callback(
             redirect_uri=settings.oauth.github.redirect_uri,
         )
     except OAuthStateError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="OAuth provider validation failed",
-        ) from exc
+        logger.error("GitHub OAuth provider exchange failed", exc_info=exc)
+        return _frontend_error_redirect("provider_error", "OAuth provider validation failed")
 
     try:
         response_data = service.authenticate_oauth_user(
@@ -296,14 +323,12 @@ def github_callback(
             user_agent=request.headers.get("user-agent"),
         )
     except BusinessRuleViolationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail) from exc
+        return _frontend_error_redirect("business_rule_violation", exc.detail)
     except (AuthenticationError, DatabaseIntegrationError) as exc:
         logger.error("GitHub OAuth authentication failed", extra={"provider": "github"}, exc_info=exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable",
-        ) from exc
-    response = JSONResponse(content=response_data.model_dump(mode="json"))
+        return _frontend_error_redirect("service_unavailable", "Authentication service unavailable")
+
+    response = _frontend_success_redirect(response_data.access_token)
     _set_refresh_token_cookie(response, response_data.refresh_token)
     _delete_state_cookie(response, "github")
     return response
