@@ -138,7 +138,7 @@ class StoredProcedureExecutor(StoredProcedureExecutorProtocol):
                     message = str(exc.args[1]) if len(exc.args) > 1 else str(exc)
                     logger.warning(
                         "Stored procedure rejected the operation",
-                        extra={"procedure_name": procedure_name, "message": message},
+                        extra={"procedure_name": procedure_name, "sp_message": message},
                     )
                     raise BusinessRuleViolationError(
                         procedure_name=procedure_name, detail=message

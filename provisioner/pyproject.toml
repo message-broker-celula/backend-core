@@ -1,0 +1,17 @@
+[project]
+name = "backend-core-provisioner"
+version = "1.0.0"
+description = "Docker-socket sidecar: provisions real database engine containers for backend-core."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.139.0",
+    "pydantic-settings>=2.14.2",
+    "uvicorn[standard]>=0.51.0",
+    "docker>=7.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "httpx2>=0.28.0",
+]

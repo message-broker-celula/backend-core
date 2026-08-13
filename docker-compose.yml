@@ -1,8 +1,8 @@
-services: 
+services:
   backend:
     container_name: backend-core-backend
 
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
 
@@ -14,4 +14,32 @@ services:
 
     restart: unless-stopped
 
-    tty: true 
+    tty: true
+
+    networks:
+      - internal_net
+
+  # Sidecar with the only Docker socket access -- see provisioner/. backend
+  # never touches Docker directly, only this service over internal_net.
+  # Note: local dev has no SQL Server of its own (SQLSERVER_HOST defaults to
+  # an external instance), so the full POST /databases -> provisioning ->
+  # sp_CrearBD path can't be exercised end-to-end here -- but the sidecar
+  # itself (real container create/stop/remove against Docker Desktop) can be.
+  provisioner:
+    container_name: backend-core-provisioner
+    build:
+      context: ./provisioner
+      dockerfile: Dockerfile
+    env_file:
+      - ./provisioner/.env
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - internal_net
+
+networks:
+  internal_net:
+    driver: bridge

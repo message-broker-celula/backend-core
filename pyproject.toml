@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.51.0",
     "python-jose[cryptography]>=3.3.0",
     "pyodbc>=5.2.0",
+    "httpx>=0.27.0",
 ]
 
 [dependency-groups]
@@ -18,3 +19,11 @@ dev = [
     "httpx2>=0.28.0",
     "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+# provisioner/ is a separate deployable project with its own venv and its
+# own top-level "app" package -- letting root pytest auto-discover
+# provisioner/tests/ collides both packages under the same "app" module
+# name. Run provisioner's suite from provisioner/ instead (its own pyproject
+# scopes it there automatically since it has no "tests" dir at the root).
+testpaths = ["tests"]

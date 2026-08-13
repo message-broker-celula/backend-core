@@ -354,6 +354,26 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         value = self._first_value(row)
         return float(value) if value is not None else None
 
+    def list_assigned_ports(self) -> tuple[int, ...]:
+        """Host ports already assigned to active provisioned engines.
+
+        Optimization only for PortAllocator's collision avoidance -- callers
+        must tolerate this raising DatabaseIntegrationError (e.g. if
+        fn_PuertosAsignados does not exist yet in SQL Server) and fall back to
+        Docker's own port-bind failure as the authoritative collision check.
+        """
+
+        result = self._executor.execute_sql(
+            "SELECT puerto FROM fn_PuertosAsignados();",
+            (),
+            procedure_name="fn_PuertosAsignados",
+        )
+        return tuple(
+            int(row["puerto"])
+            for row in result.rows
+            if row.get("puerto") is not None
+        )
+
     def register_event(
         self,
         event: str,

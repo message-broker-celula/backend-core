@@ -20,10 +20,21 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: uv sync --all-groups
 
-      - name: Run test suite
+      - name: Run backend test suite
+        run: uv run python -m pytest -q
+
+      # provisioner/ is a separate deployable project (own pyproject.toml,
+      # own venv) -- see the testpaths comment in the root pyproject.toml
+      # for why its tests can't just be picked up by the step above.
+      - name: Install provisioner dependencies
+        working-directory: provisioner
+        run: uv sync --all-groups
+
+      - name: Run provisioner test suite
+        working-directory: provisioner
         run: uv run python -m pytest -q
 
   build-and-push:
@@ -45,16 +56,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Set image name
+      - name: Set image names
         id: meta
         run: |
           IMAGE=ghcr.io/${{ github.repository }}
           echo "image=${IMAGE,,}" >> "$GITHUB_OUTPUT"
+          echo "provisioner_image=${IMAGE,,}-provisioner" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
+      - name: Build and push backend image
         run: |
           docker build -t ${{ steps.meta.outputs.image }}:latest .
           docker push ${{ steps.meta.outputs.image }}:latest
+
+      - name: Build and push provisioner image
+        run: |
+          docker build -t ${{ steps.meta.outputs.provisioner_image }}:latest ./provisioner
+          docker push ${{ steps.meta.outputs.provisioner_image }}:latest
 
   deploy:
     name: Deploy VPS
@@ -73,13 +90,13 @@ jobs:
           script: |
             set -e
 
-            IMAGE=ghcr.io/${{ github.repository }}:latest
-
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            docker pull $IMAGE
-
             cd /srv/projects/backend-core
+
+            # Pulls both backend-core and backend-core-provisioner (image:
+            # references in docker-compose.prod.yml), not just the backend.
+            docker compose -f docker-compose.prod.yml pull
 
             docker compose -f docker-compose.prod.yml down
 

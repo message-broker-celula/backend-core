@@ -25,6 +25,8 @@ from app.databases.schemas.database_schemas import (
     UpdateDatabaseSpaceResponse,
     ValidateConnectionResponse,
 )
+from app.provisioning.exceptions.provisioning_exceptions import ProvisioningError
+from app.provisioning.services.provisioning_service import DatabaseProvisioningService
 from app.repositories.exceptions.database_exceptions import (
     RepositoryMappingError,
     ResourceNotFoundError,
@@ -36,16 +38,23 @@ logger = logging.getLogger(__name__)
 class DatabaseService:
     """Coordinate database lifecycle orchestration for the `/databases` API."""
 
-    def __init__(self, repository: DatabaseManagementRepositoryProtocol) -> None:
+    def __init__(
+        self,
+        repository: DatabaseManagementRepositoryProtocol,
+        provisioning: DatabaseProvisioningService,
+    ) -> None:
         """Initialize the service with a database management repository.
 
         Args:
             repository: Repository adapter used to reach the Stored Procedure
                 layer. All business decisions (quotas, TTL, permissions) are
                 resolved by the database itself.
+            provisioning: Orchestrates the real engine container behind each
+                database instance (see app.provisioning).
         """
 
         self._repository = repository
+        self._provisioning = provisioning
 
     def create_database(
         self,
@@ -53,9 +62,40 @@ class DatabaseService:
         payload: Mapping[str, Any],
         ip: str | None,
     ) -> DatabaseActionResponse:
-        """Create an additional database instance for the subject."""
+        """Create an additional database instance for the subject.
 
-        database_id = self._repository.create_database(subject, payload, ip)
+        Provisions a real engine container first -- sp_CrearBD requires real
+        host/puerto/usuario_bd/password_bd as *input*, it does not invent
+        them. If sp_CrearBD then rejects the create (quota, duplicate name,
+        etc.), the just-created container is torn down instead of leaking.
+        """
+
+        provisioned = self._provisioning.provision(
+            engine=str(payload["nombre_motor"]).strip().upper(),
+            version=str(payload["version_motor"]),
+            requested_name=str(payload["nombre_bd"]),
+        )
+        enriched = dict(payload)
+        enriched.update(
+            host=provisioned.host,
+            puerto=provisioned.port,
+            usuario_bd=provisioned.username,
+            password_bd=provisioned.password,
+            nombre_bd=provisioned.database_name,
+        )
+        try:
+            database_id = self._repository.create_database(subject, enriched, ip)
+        except Exception:
+            logger.error(
+                "sp_CrearBD failed after provisioning; removing orphaned container",
+                extra={"subject": subject, "container_name": provisioned.container_name},
+            )
+            try:
+                self._provisioning.deprovision(port=provisioned.port)
+            except ProvisioningError as cleanup_exc:
+                logger.error("Failed to clean up orphaned container", exc_info=cleanup_exc)
+            raise
+
         logger.info("Database created", extra={"subject": subject, "database_id": database_id})
         return DatabaseActionResponse(
             database_id=database_id,
@@ -89,8 +129,15 @@ class DatabaseService:
         database_id: str,
         ip: str | None,
     ) -> DatabaseActionResponse:
-        """Deprovision a database instance owned by the subject."""
+        """Deprovision a database instance owned by the subject.
 
+        Removes the real container first -- if that fails, the SQL row is
+        left untouched and the call is safe to retry, instead of deleting
+        the record for a container that's still actually running.
+        """
+
+        port = self._extract_port(self._repository.get_database(subject, database_id))
+        self._provisioning.deprovision(port=port)
         self._repository.delete_database(subject, database_id, ip)
         logger.info(
             "Database deleted",
@@ -125,8 +172,14 @@ class DatabaseService:
         database_id: str,
         ip: str | None,
     ) -> DatabaseActionResponse:
-        """Pause a database instance."""
+        """Pause a database instance.
 
+        Stops (not removes) the real container first, then flips the SQL
+        Server status flag.
+        """
+
+        port = self._extract_port(self._repository.get_database(subject, database_id))
+        self._provisioning.stop(port=port)
         self._repository.pause_database(subject, database_id, ip)
         logger.info(
             "Database paused",
@@ -139,8 +192,19 @@ class DatabaseService:
         )
 
     def resume_database(self, subject: str, database_id: str) -> DatabaseActionResponse:
-        """Resume a previously paused database instance."""
+        """Resume a previously paused database instance.
 
+        Restarts the real container -- the engine becomes reachable again --
+        but `self._repository.resume_database` still unconditionally raises
+        `RepositoryMappingError` today because `sp_ReanudarBD` does not exist
+        in SQL Server yet. That is a pre-existing, out-of-repo schema gap;
+        this method deliberately does not work around it in Python (see
+        sqlserver_repository.py's `resume_database`). The API call remains a
+        503 until that stored procedure is added.
+        """
+
+        port = self._extract_port(self._repository.get_database(subject, database_id))
+        self._provisioning.start(port=port)
         self._repository.resume_database(subject, database_id)
         logger.info(
             "Database resumed",
@@ -207,6 +271,14 @@ class DatabaseService:
     @staticmethod
     def _normalized(row: Mapping[str, Any]) -> dict[str, Any]:
         return normalize_row(row)
+
+    @staticmethod
+    def _extract_port(row: Mapping[str, Any]) -> int:
+        data = normalize_row(row)
+        port = pick_first(data, "puerto", "port")
+        if port is None:
+            raise ProvisioningError("Database row is missing its provisioned host port")
+        return int(port)
 
     def _to_instance(self, row: Mapping[str, Any]) -> DatabaseInstance:
         return row_to_database_instance(row)

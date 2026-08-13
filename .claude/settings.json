@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s --max-time 15 -o /dev/null -w 'HTTP %{http_code}\\\\n' -X OPTIONS https://api.mbro.andrescortes.dev/auth/github -H 'Origin: https://mbro.andrescortes.dev' -H 'Access-Control-Request-Method: GET')",
+      "Bash(curl -s --max-time 15 -X OPTIONS https://api.mbro.andrescortes.dev/auth/github -H 'Origin: https://mbro.andrescortes.dev' -H 'Access-Control-Request-Method: GET' -D - -o /dev/null)",
+      "Bash(git commit -m ' *)",
+      "Bash(curl -s -D - -o /dev/null --max-time 15 \"https://api.mbro.andrescortes.dev/auth/google/callback\")"
+    ]
+  }
+}

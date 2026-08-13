@@ -24,8 +24,10 @@ class DatabaseStatus(str, Enum):
 class CreateDatabaseRequest(BaseModel):
     """Request payload for sp_CrearBD.
 
-    host/puerto/usuario_bd/password_bd are generated or known by the backend
-    (e.g. the newly provisioned engine container) -- SQL Server only stores
+    host/puerto/usuario_bd/password_bd are NOT accepted from the client --
+    no caller can know them in advance. The backend provisions a real engine
+    container via the provisioning sidecar and generates these values itself
+    (see app.provisioning) before calling sp_CrearBD; SQL Server only stores
     and encrypts them, it does not invent them.
     """
 
@@ -34,10 +36,6 @@ class CreateDatabaseRequest(BaseModel):
     nombre_motor: str = Field(..., examples=["MYSQL"])
     version_motor: str = Field(..., examples=["8.4"])
     nombre_bd: str
-    host: str
-    puerto: int
-    usuario_bd: str
-    password_bd: str
     espacio_maximo_mb: int = 20
     conexiones_maximas: int = 5
     ttl_dias: int = 30

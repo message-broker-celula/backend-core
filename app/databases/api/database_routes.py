@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.auth.dependencies.auth_dependencies import get_current_user
 from app.auth.schemas.auth_schemas import AuthenticatedUser
+from app.core.config import settings
 from app.databases.repositories.database_repository import DatabaseManagementRepository
 from app.databases.schemas.database_schemas import (
     CreateDatabaseRequest,
@@ -30,6 +31,9 @@ from app.databases.schemas.database_schemas import (
     ValidateConnectionResponse,
 )
 from app.databases.services.database_service import DatabaseService
+from app.provisioning.clients.http_provisioner_client import HttpProvisionerClient
+from app.provisioning.port_allocator import PortAllocator
+from app.provisioning.services.provisioning_service import DatabaseProvisioningService
 from app.repositories.exceptions.database_exceptions import (
     BusinessRuleViolationError,
     DatabaseIntegrationError,
@@ -43,7 +47,27 @@ logger = logging.getLogger(__name__)
 def get_database_service() -> DatabaseService:
     """Return the Stored Procedure-backed database service dependency."""
 
-    return DatabaseService(repository=DatabaseManagementRepository())
+    repository = DatabaseManagementRepository()
+    provisioning_settings = settings.provisioning
+    client = HttpProvisionerClient(
+        base_url=provisioning_settings.base_url,
+        shared_secret=provisioning_settings.shared_secret.get_secret_value(),
+        timeout=provisioning_settings.request_timeout_seconds,
+    )
+    allocator = PortAllocator(
+        port_repository=repository,
+        range_start=provisioning_settings.port_range_start,
+        range_end=provisioning_settings.port_range_end,
+    )
+    provisioning = DatabaseProvisioningService(
+        client=client,
+        port_allocator=allocator,
+        public_host=provisioning_settings.public_host,
+        supported_engines=provisioning_settings.supported_engines,
+        password_length=provisioning_settings.password_length,
+        port_allocation_attempts=provisioning_settings.port_allocation_attempts,
+    )
+    return DatabaseService(repository=repository, provisioning=provisioning)
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]

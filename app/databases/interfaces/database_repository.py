@@ -76,3 +76,7 @@ class DatabaseManagementRepositoryProtocol(Protocol):
     def get_space_percentage(self, database_id: str) -> float | None:
         """Return storage usage percentage (fn_PorcentajeEspacioUsado)."""
         ...
+
+    def list_assigned_ports(self) -> tuple[int, ...]:
+        """Return host ports already assigned to active provisioned engines (fn_PuertosAsignados)."""
+        ...

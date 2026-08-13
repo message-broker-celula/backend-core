@@ -17,6 +17,10 @@ services:
     networks:
       - internal_net
 
+    depends_on:
+      provisioner:
+        condition: service_healthy
+
     # Limites de recursos reales para 'docker compose up' (fuera de Swarm,
     # el bloque deploy.resources.limits se IGNORA silenciosamente; estas
     # claves top-level si se aplican). Evita que un flood agote CPU/RAM
@@ -38,6 +42,47 @@ services:
       driver: json-file
       options:
         max-size: "10m"   # evita que logs de un ataque llenen el disco
+        max-file: "3"
+
+  # Sidecar con el UNICO acceso al socket de Docker en todo el despliegue.
+  # backend-core-backend nunca toca Docker directo -- le pide crear/parar/
+  # arrancar/eliminar contenedores de motores de BD (MySQL, etc.) a este
+  # servicio via internal_net. Aisla ese acceso (equivalente a root sobre el
+  # host) del proceso que maneja login OAuth/input de usuarios externos.
+  # Los contenedores de motores que este servicio crea NO son miembros de
+  # internal_net -- viven en "provisioned_net", separados de backend/nginx.
+  provisioner:
+    container_name: backend-core-provisioner
+    image: ghcr.io/message-broker-celula/backend-core-provisioner:latest
+
+    expose:
+      - "9000"
+
+    restart: unless-stopped
+
+    env_file:
+      - .env.provisioner
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    networks:
+      - internal_net
+
+    cpus: "0.5"
+    mem_limit: 256m
+
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
         max-file: "3"
 
   nginx:
@@ -75,6 +120,14 @@ services:
 
 networks:
   internal_net:
+    driver: bridge
+  # Red donde el provisioner conecta los contenedores de motores de BD que
+  # crea dinamicamente (no son servicios estaticos de este compose). Nombre
+  # explicito porque provisioner/app/docker_client.py la referencia literal.
+  # Aislada de internal_net: un contenedor de motor provisionado nunca puede
+  # alcanzar backend/nginx/provisioner.
+  provisioned_net:
+    name: provisioned_net
     driver: bridge
 
 volumes:

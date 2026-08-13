@@ -75,6 +75,26 @@ class OAuthSettings(BaseModel):
     state_ttl_seconds: int
 
 
+class ProvisioningSettings(BaseModel):
+    """Database engine auto-provisioning configuration.
+
+    The provisioner is a separate sidecar service (the only process with
+    /var/run/docker.sock access) that this backend calls over the internal
+    docker network to create/stop/start/remove real database engine
+    containers -- see provisioner/.
+    """
+
+    base_url: str
+    shared_secret: SecretStr
+    request_timeout_seconds: int
+    public_host: str
+    port_range_start: int
+    port_range_end: int
+    port_allocation_attempts: int
+    password_length: int
+    supported_engines: list[str]
+
+
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -150,6 +170,22 @@ class Settings(BaseSettings):
     oauth_state_cookie_secure: bool = Field(default=True)
     oauth_state_cookie_samesite: str = Field(default="lax")
     oauth_state_ttl_seconds: int = Field(default=600)
+
+    # Database provisioning (sidecar with the only Docker socket access --
+    # see provisioner/). base_url uses the compose service name "provisioner"
+    # by default since backend-core-backend reaches it over internal_net.
+    provisioning_base_url: str = Field(default="http://provisioner:9000")
+    provisioning_shared_secret: str = Field(default="")
+    provisioning_request_timeout_seconds: int = Field(default=45)
+    # VPS's externally-reachable address (raw TCP, no nginx/TLS involved) --
+    # NOT the sidecar's internal Docker hostname. Returned to end users as
+    # the `host` they connect their own apps to.
+    provisioning_public_host: str = Field(default="")
+    provisioning_port_range_start: int = Field(default=30000)
+    provisioning_port_range_end: int = Field(default=40000)
+    provisioning_port_allocation_attempts: int = Field(default=5)
+    provisioning_password_length: int = Field(default=24)
+    provisioning_supported_engines: str = Field(default="MYSQL")
 
     @property
     def app(self) -> AppSettings:
@@ -252,6 +288,22 @@ class Settings(BaseSettings):
             state_cookie_secure=self.oauth_state_cookie_secure,
             state_cookie_samesite=self.oauth_state_cookie_samesite,
             state_ttl_seconds=self.oauth_state_ttl_seconds,
+        )
+
+    @property
+    def provisioning(self) -> ProvisioningSettings:
+        """Database engine provisioning settings."""
+
+        return ProvisioningSettings(
+            base_url=self.provisioning_base_url.rstrip("/"),
+            shared_secret=SecretStr(self.provisioning_shared_secret),
+            request_timeout_seconds=self.provisioning_request_timeout_seconds,
+            public_host=self.provisioning_public_host,
+            port_range_start=self.provisioning_port_range_start,
+            port_range_end=self.provisioning_port_range_end,
+            port_allocation_attempts=self.provisioning_port_allocation_attempts,
+            password_length=self.provisioning_password_length,
+            supported_engines=self._split_csv(self.provisioning_supported_engines.upper()),
         )
 
 
