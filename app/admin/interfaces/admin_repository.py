@@ -44,3 +44,13 @@ class AdminRepositoryProtocol(Protocol):
     ) -> tuple[dict[str, Any], ...]:
         """List every provisioned database across all users (sp_ListarTodasLasBasesDatos)."""
         ...
+
+    def list_all_services(
+        self,
+        requester_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        status_filter: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """List every célula service (DNS subdomain) across all células (sp_ListarTodosLosServicios)."""
+        ...

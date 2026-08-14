@@ -39,8 +39,14 @@ class CelulaRepositoryProtocol(Protocol):
         """List services registered under a célula (fn_ServiciosPorCelula)."""
         ...
 
-    def delete_celula_service(self, subject: str, celula_id: str, service_id: str) -> None:
-        """Remove a service registered under a célula."""
+    def delete_celula_service(
+        self,
+        subject: str,
+        celula_id: str,
+        service_id: str,
+        ip: str | None = None,
+    ) -> None:
+        """Permanently remove a service registered under a célula (sp_EliminarServicio)."""
         ...
 
     def change_service_status(

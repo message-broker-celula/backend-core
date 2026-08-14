@@ -95,6 +95,20 @@ class ProvisioningSettings(BaseModel):
     supported_engines: list[str]
 
 
+class DnsSettings(BaseModel):
+    """User self-service DNS subdomain configuration (Cloudflare).
+
+    Backs `[servicio].[celula].{root_domain}` records under a domain
+    separate from the platform's own APP_ROOT_DOMAIN -- see app/dns/.
+    """
+
+    cloudflare_api_token: SecretStr
+    cloudflare_zone_id: str
+    root_domain: str
+    target_ip: str
+    request_timeout_seconds: int
+
+
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -191,6 +205,19 @@ class Settings(BaseSettings):
     provisioning_port_allocation_attempts: int = Field(default=5)
     provisioning_password_length: int = Field(default=24)
     provisioning_supported_engines: str = Field(default="MYSQL")
+
+    # User self-service DNS subdomains (Cloudflare) -- [servicio].[celula].
+    # {dns_root_domain}, separate from APP_ROOT_DOMAIN (the platform's own
+    # domain). The token is scoped/IP-filtered to this backend's egress IP
+    # in the Cloudflare dashboard, never logged, never committed.
+    dns_cloudflare_api_token: str = Field(default="")
+    dns_cloudflare_zone_id: str = Field(default="")
+    dns_root_domain: str = Field(default="coderhivex.com")
+    # VPS's externally-reachable IP -- same address as provisioning_public_host
+    # conceptually, kept as its own setting since the two features are
+    # otherwise unrelated (Docker provisioning vs public DNS).
+    dns_target_ip: str = Field(default="")
+    dns_request_timeout_seconds: int = Field(default=15)
 
     @property
     def app(self) -> AppSettings:
@@ -309,6 +336,18 @@ class Settings(BaseSettings):
             port_allocation_attempts=self.provisioning_port_allocation_attempts,
             password_length=self.provisioning_password_length,
             supported_engines=self._split_csv(self.provisioning_supported_engines.upper()),
+        )
+
+    @property
+    def dns(self) -> DnsSettings:
+        """User self-service DNS subdomain settings."""
+
+        return DnsSettings(
+            cloudflare_api_token=SecretStr(self.dns_cloudflare_api_token),
+            cloudflare_zone_id=self.dns_cloudflare_zone_id,
+            root_domain=self.dns_root_domain,
+            target_ip=self.dns_target_ip,
+            request_timeout_seconds=self.dns_request_timeout_seconds,
         )
 
 

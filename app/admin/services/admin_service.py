@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.admin.interfaces.admin_repository import AdminRepositoryProtocol
-from app.admin.schemas.admin_schemas import AdminUserSummary
+from app.admin.schemas.admin_schemas import AdminServiceSummary, AdminUserSummary
 from app.databases.row_mapping import row_to_database_instance
 from app.databases.schemas.database_schemas import DatabaseInstance
 
@@ -70,6 +70,23 @@ class AdminService:
         )
         return [self._to_database_instance(row) for row in rows]
 
+    def list_all_services(
+        self,
+        requester_id: str,
+        page: int = 1,
+        page_size: int = 50,
+        status_filter: str | None = None,
+    ) -> list[AdminServiceSummary]:
+        """List every célula service (DNS subdomain) across all células."""
+
+        rows = self._repository.list_all_services(
+            requester_id,
+            page,
+            page_size,
+            status_filter.upper() if status_filter else None,
+        )
+        return [self._to_service_summary(row) for row in rows]
+
     @staticmethod
     def _normalized(row: Mapping[str, Any]) -> dict[str, Any]:
         return {str(key).lower(): value for key, value in row.items()}
@@ -88,3 +105,16 @@ class AdminService:
 
     def _to_database_instance(self, row: Mapping[str, Any]) -> DatabaseInstance:
         return row_to_database_instance(row)
+
+    def _to_service_summary(self, row: Mapping[str, Any]) -> AdminServiceSummary:
+        data = self._normalized(row)
+        return AdminServiceSummary(
+            service_id=str(data.get("id_servicio") or data.get("service_id") or ""),
+            celula_id=str(data.get("id_celula") or data.get("celula_id") or ""),
+            celula_name=data.get("nombre_celula") or data.get("celula_name"),
+            service_name=data.get("nombre_servicio") or data.get("service_name"),
+            domain=data.get("subdominio_completo") or data.get("domain"),
+            status=data.get("estado") or data.get("status"),
+            database_id=data.get("id_bd") or data.get("database_id"),
+            created_at=data.get("fecha_creacion") or data.get("created_at"),
+        )

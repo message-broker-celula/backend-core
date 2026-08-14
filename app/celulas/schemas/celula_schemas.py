@@ -26,11 +26,23 @@ class CreateCelulaRequest(BaseModel):
 
 
 class RegisterCelulaServiceRequest(BaseModel):
-    """Request payload for sp_CrearServicio."""
+    """Request payload for sp_CrearServicio.
+
+    `service_name` becomes a real public DNS subdomain
+    (`[service_name].[celula].coderhivex.com`), so it's constrained to a
+    valid single DNS label -- lowercase alphanumeric, hyphens allowed but
+    not at the start/end, max 63 chars (the actual DNS protocol limit).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    service_name: str = Field(..., min_length=1, max_length=63, examples=["api"])
+    service_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=63,
+        pattern=r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+        examples=["api"],
+    )
     service_type: CelulaServiceType = CelulaServiceType.OTHER
     database_id: str | None = None
     puerto_interno: int | None = None
@@ -82,3 +94,12 @@ class CelulaServiceListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     services: list[CelulaService] = Field(default_factory=list)
+
+
+class DnsStatusResponse(BaseModel):
+    """Propagation status for a célula service's DNS record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fqdn: str
+    propagated: bool

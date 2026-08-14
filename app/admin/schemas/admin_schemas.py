@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.databases.schemas.database_schemas import DatabaseInstance
@@ -41,3 +43,26 @@ class AdminDatabaseListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     databases: list[DatabaseInstance] = Field(default_factory=list)
+
+
+class AdminServiceSummary(BaseModel):
+    """Summary row for the admin service listing (sp_ListarTodosLosServicios)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    service_id: str
+    celula_id: str
+    celula_name: str | None = None
+    service_name: str | None = None
+    domain: str | None = None
+    status: str | None = None
+    database_id: str | None = None
+    created_at: datetime | None = None
+
+
+class AdminServiceListResponse(BaseModel):
+    """Global, paginated view of every célula service (DNS subdomain)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    services: list[AdminServiceSummary] = Field(default_factory=list)

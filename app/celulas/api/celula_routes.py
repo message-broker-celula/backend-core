@@ -23,10 +23,15 @@ from app.celulas.schemas.celula_schemas import (
     CelulaServiceListResponse,
     ChangeServiceStatusRequest,
     CreateCelulaRequest,
+    DnsStatusResponse,
     RegisterCelulaServiceRequest,
 )
 from app.celulas.services.celula_service import CelulaOrchestrationService
+from app.core.config import settings
+from app.dns.clients.cloudflare_client import CloudflareDnsClient
+from app.dns.services.dns_service import DnsProvisioningService
 from app.repositories.exceptions.database_exceptions import (
+    BusinessRuleViolationError,
     DatabaseIntegrationError,
     ResourceNotFoundError,
 )
@@ -38,7 +43,18 @@ logger = logging.getLogger(__name__)
 def get_celula_service() -> CelulaOrchestrationService:
     """Return the Stored Procedure-backed célula service dependency."""
 
-    return CelulaOrchestrationService(repository=CelulaRepository())
+    dns_settings = settings.dns
+    client = CloudflareDnsClient(
+        api_token=dns_settings.cloudflare_api_token.get_secret_value(),
+        zone_id=dns_settings.cloudflare_zone_id,
+        timeout=dns_settings.request_timeout_seconds,
+    )
+    dns_service = DnsProvisioningService(
+        client=client,
+        root_domain=dns_settings.root_domain,
+        target_ip=dns_settings.target_ip,
+    )
+    return CelulaOrchestrationService(repository=CelulaRepository(), dns=dns_service)
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
@@ -51,6 +67,10 @@ def _unavailable(exc: Exception) -> HTTPException:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Célula service unavailable",
     )
+
+
+def _business_error(exc: BusinessRuleViolationError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
 
 
 @router.post(
@@ -140,6 +160,8 @@ def register_celula_service(
             port=payload.puerto_interno,
             ip=request.client.host if request.client else None,
         )
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 
@@ -167,18 +189,58 @@ def list_celula_services(
 @router.delete(
     "/{celula_id}/services/{service_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Remove a service registered under a célula",
+    summary="Permanently remove a service registered under a célula",
+    responses={404: {"description": "Service not found"}},
 )
 def delete_celula_service(
+    request: Request,
     celula_id: str,
     service_id: str,
     current_user: CurrentUser,
     service: Service,
 ) -> None:
-    """Remove a service registered under a célula."""
+    """Permanently remove a service and its real DNS record."""
 
     try:
-        service.delete_service(current_user.subject, celula_id, service_id)
+        service.delete_service(
+            current_user.subject,
+            celula_id,
+            service_id,
+            request.client.host if request.client else None,
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service not found",
+        ) from exc
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.get(
+    "/{celula_id}/services/{service_id}/dns-status",
+    response_model=DnsStatusResponse,
+    summary="Check DNS propagation status for a célula service",
+    responses={404: {"description": "Service not found"}},
+)
+def get_dns_status(
+    celula_id: str,
+    service_id: str,
+    current_user: CurrentUser,
+    service: Service,
+) -> DnsStatusResponse:
+    """Check whether the service's Cloudflare DNS record has propagated."""
+
+    try:
+        result = service.check_dns_status(current_user.subject, celula_id, service_id)
+        return DnsStatusResponse(**result)
+    except ResourceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service not found",
+        ) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 

@@ -471,6 +471,26 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         )
         return result.rows
 
+    def list_all_services(
+        self,
+        requester_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        status_filter: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        result = self._executor.execute_sql(
+            """
+            EXEC sp_ListarTodosLosServicios
+                @id_usuario_solicitante = ?,
+                @pagina = ?,
+                @tamano_pagina = ?,
+                @estado_filtro = ?;
+            """,
+            (requester_id, page, page_size, status_filter),
+            procedure_name="sp_ListarTodosLosServicios",
+        )
+        return result.rows
+
     # ------------------------------------------------------------------
     # Celulas and services
     # ------------------------------------------------------------------
@@ -557,10 +577,18 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         )
         return result.rows
 
-    def delete_celula_service(self, subject: str, celula_id: str, service_id: str) -> None:
-        """There is no sp_EliminarServicioCelula -- pausing is the safe equivalent."""
-
-        self.change_service_status(subject, service_id, "PAUSADO", None)
+    def delete_celula_service(
+        self,
+        subject: str,
+        celula_id: str,
+        service_id: str,
+        ip: str | None = None,
+    ) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_EliminarServicio @id_servicio = ?, @id_usuario_solicitante = ?, @ip = ?;",
+            (service_id, subject, ip),
+            procedure_name="sp_EliminarServicio",
+        )
 
     def change_service_status(
         self,

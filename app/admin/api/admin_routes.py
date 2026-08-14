@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from app.admin.repositories.admin_repository import AdminRepository
 from app.admin.schemas.admin_schemas import (
     AdminDatabaseListResponse,
+    AdminServiceListResponse,
     AdminUserListResponse,
     AdminUserSummary,
     UpdateUserRoleRequest,
@@ -124,6 +125,39 @@ def list_all_databases(
     try:
         return AdminDatabaseListResponse(
             databases=service.list_all_databases(
+                admin.subject,
+                page,
+                page_size,
+                status_filter,
+            )
+        )
+    except BusinessRuleViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail) from exc
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.get(
+    "/services",
+    response_model=AdminServiceListResponse,
+    summary="List every célula service (DNS subdomain)",
+    description=(
+        "Global oversight view across every user-created subdomain, for "
+        "auditing/revocation. Requires the 'admin' role."
+    ),
+)
+def list_all_services(
+    admin: RequireAdmin,
+    service: Service,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    status_filter: str | None = Query(default=None, pattern="^(ACTIVO|CAIDO|PAUSADO|ELIMINADO)$"),
+) -> AdminServiceListResponse:
+    """List every célula service across all users, for administrative oversight."""
+
+    try:
+        return AdminServiceListResponse(
+            services=service.list_all_services(
                 admin.subject,
                 page,
                 page_size,
