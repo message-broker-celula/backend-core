@@ -14,6 +14,7 @@ from app.celulas.api.celula_routes import router as celulas_router
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.databases.api.database_routes import router as databases_router
+from app.external_clients.api.external_client_routes import router as external_clients_router
 from app.metrics.api.metrics_routes import router as metrics_router
 
 # -----------------------------------------------------------------------
@@ -54,6 +55,7 @@ app.include_router(celulas_router)
 app.include_router(audit_router)
 app.include_router(metrics_router)
 app.include_router(ai_router)
+app.include_router(external_clients_router)
 
 app.add_middleware(
     TrustedHostMiddleware,

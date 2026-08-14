@@ -688,6 +688,78 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         )
 
     # ------------------------------------------------------------------
+    # External clients (machine-to-machine Postgres provisioning)
+    # ------------------------------------------------------------------
+
+    def register_external_client(
+        self,
+        team_name: str,
+        contact_email: str,
+        ip: str | None = None,
+    ) -> Mapping[str, Any]:
+        sql = """
+            DECLARE @id_usuario UNIQUEIDENTIFIER, @api_key VARCHAR(80), @key_prefix VARCHAR(16);
+
+            EXEC sp_RegistrarClienteExterno
+                @nombre_equipo = ?,
+                @correo_contacto = ?,
+                @ip = ?,
+                @id_usuario = @id_usuario OUTPUT,
+                @api_key = @api_key OUTPUT,
+                @key_prefix = @key_prefix OUTPUT;
+
+            SELECT @id_usuario AS id_usuario, @api_key AS api_key, @key_prefix AS key_prefix;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (team_name, contact_email, ip),
+            procedure_name="sp_RegistrarClienteExterno",
+        )
+        return self._first_row(result.rows, "sp_RegistrarClienteExterno")
+
+    def validate_api_key(self, api_key: str) -> str | None:
+        sql = """
+            DECLARE @id_usuario UNIQUEIDENTIFIER;
+            EXEC sp_ValidarClaveApiExterna @api_key_texto_plano = ?, @id_usuario = @id_usuario OUTPUT;
+            SELECT @id_usuario AS id_usuario;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (api_key,),
+            procedure_name="sp_ValidarClaveApiExterna",
+        )
+        row = self._first_row(result.rows, "sp_ValidarClaveApiExterna")
+        value = self._first_value(row)
+        return str(value) if value is not None else None
+
+    def rotate_api_key(self, api_key: str, ip: str | None = None) -> Mapping[str, Any]:
+        sql = """
+            DECLARE @id_usuario UNIQUEIDENTIFIER, @api_key_nueva VARCHAR(80), @key_prefix VARCHAR(16);
+
+            EXEC sp_RotarClaveApiExterna
+                @api_key_actual = ?,
+                @ip = ?,
+                @id_usuario = @id_usuario OUTPUT,
+                @api_key_nueva = @api_key_nueva OUTPUT,
+                @key_prefix = @key_prefix OUTPUT;
+
+            SELECT @id_usuario AS id_usuario, @api_key_nueva AS api_key, @key_prefix AS key_prefix;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (api_key, ip),
+            procedure_name="sp_RotarClaveApiExterna",
+        )
+        return self._first_row(result.rows, "sp_RotarClaveApiExterna")
+
+    def revoke_api_key(self, api_key: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_RevocarClaveApiExterna @api_key_actual = ?, @ip = ?;",
+            (api_key, ip),
+            procedure_name="sp_RevocarClaveApiExterna",
+        )
+
+    # ------------------------------------------------------------------
     # Mapping helpers
     # ------------------------------------------------------------------
 
