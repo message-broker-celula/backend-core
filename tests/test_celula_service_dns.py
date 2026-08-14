@@ -13,10 +13,9 @@ class FakeDnsClient:
     def __init__(self) -> None:
         self.created: list[tuple[str, str]] = []
         self.deleted: list[str] = []
-        self.resolve_result = True
 
     def record_exists(self, fqdn: str) -> bool:
-        return any(f == fqdn for f, _ in self.created)
+        return any(f == fqdn for f, _ in self.created) and fqdn not in self.deleted
 
     def create_record(self, fqdn: str, target_ip: str) -> str:
         self.created.append((fqdn, target_ip))
@@ -24,9 +23,6 @@ class FakeDnsClient:
 
     def delete_record(self, fqdn: str) -> None:
         self.deleted.append(fqdn)
-
-    def resolves_to(self, fqdn: str, expected_ip: str) -> bool:
-        return self.resolve_result
 
 
 class FakeCelulaRepository:
@@ -131,9 +127,19 @@ def test_delete_service_raises_not_found_for_unknown_service_id() -> None:
 def test_check_dns_status_reports_propagation_for_the_right_fqdn() -> None:
     repository = FakeCelulaRepository()
     dns_client = FakeDnsClient()
-    dns_client.resolve_result = False
     service = _service(repository, dns_client)
 
     result = service.check_dns_status("user-1", "celula-1", "svc-1")
 
     assert result == {"fqdn": "api.alpha.coderhivex.com", "propagated": False}
+
+
+def test_check_dns_status_reports_propagated_true_once_the_record_exists() -> None:
+    repository = FakeCelulaRepository()
+    dns_client = FakeDnsClient()
+    dns_client.created.append(("api.alpha.coderhivex.com", "46.224.97.85"))
+    service = _service(repository, dns_client)
+
+    result = service.check_dns_status("user-1", "celula-1", "svc-1")
+
+    assert result == {"fqdn": "api.alpha.coderhivex.com", "propagated": True}

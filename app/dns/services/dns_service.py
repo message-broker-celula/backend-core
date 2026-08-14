@@ -71,8 +71,14 @@ class DnsProvisioningService:
         logger.info("DNS record removed", extra={"fqdn": fqdn})
 
     def check_status(self, service_name: str, celula_name: str) -> dict[str, bool | str]:
-        """Return propagation status for a célula service's DNS record."""
+        """Return propagation status for a célula service's DNS record.
+
+        "Propagated" means the record exists in Cloudflare (authoritative,
+        effectively instant), not that it resolves to the origin IP from the
+        public internet -- every record here is proxied, so public resolvers
+        only ever return Cloudflare's edge IPs, never the origin.
+        """
 
         fqdn = self.build_fqdn(service_name, celula_name)
-        propagated = self._client.resolves_to(fqdn, self._target_ip)
+        propagated = self._client.record_exists(fqdn)
         return {"fqdn": fqdn, "propagated": propagated}

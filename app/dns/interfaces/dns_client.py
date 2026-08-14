@@ -30,7 +30,3 @@ class DnsClientProtocol(Protocol):
     def delete_record(self, fqdn: str) -> None:
         """Delete the A record for the given FQDN, if any (idempotent)."""
         ...
-
-    def resolves_to(self, fqdn: str, expected_ip: str) -> bool:
-        """Return whether fqdn currently resolves to expected_ip (propagation check)."""
-        ...

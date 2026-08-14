@@ -112,26 +112,3 @@ def test_request_raises_provider_error_on_transport_failure() -> None:
     with patch("app.dns.clients.cloudflare_client.httpx.request", side_effect=httpx.ConnectError("boom")):
         with pytest.raises(DnsProviderError):
             client.record_exists("api.alpha.coderhivex.com")
-
-
-def test_resolves_to_true_when_doh_answer_matches() -> None:
-    client = _client()
-    doh_response = _response(200, {"Answer": [{"data": "46.224.97.85"}]})
-
-    with patch("app.dns.clients.cloudflare_client.httpx.get", return_value=doh_response):
-        assert client.resolves_to("api.alpha.coderhivex.com", "46.224.97.85") is True
-
-
-def test_resolves_to_false_when_doh_answer_does_not_match() -> None:
-    client = _client()
-    doh_response = _response(200, {"Answer": [{"data": "1.2.3.4"}]})
-
-    with patch("app.dns.clients.cloudflare_client.httpx.get", return_value=doh_response):
-        assert client.resolves_to("api.alpha.coderhivex.com", "46.224.97.85") is False
-
-
-def test_resolves_to_false_on_doh_transport_failure() -> None:
-    client = _client()
-
-    with patch("app.dns.clients.cloudflare_client.httpx.get", side_effect=httpx.ConnectError("boom")):
-        assert client.resolves_to("api.alpha.coderhivex.com", "46.224.97.85") is False

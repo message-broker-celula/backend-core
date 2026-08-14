@@ -8,10 +8,9 @@ class FakeDnsClient:
     def __init__(self) -> None:
         self.created: list[tuple[str, str]] = []
         self.deleted: list[str] = []
-        self.resolve_result = True
 
     def record_exists(self, fqdn: str) -> bool:
-        return any(f == fqdn for f, _ in self.created)
+        return any(f == fqdn for f, _ in self.created) and fqdn not in self.deleted
 
     def create_record(self, fqdn: str, target_ip: str) -> str:
         self.created.append((fqdn, target_ip))
@@ -19,9 +18,6 @@ class FakeDnsClient:
 
     def delete_record(self, fqdn: str) -> None:
         self.deleted.append(fqdn)
-
-    def resolves_to(self, fqdn: str, expected_ip: str) -> bool:
-        return self.resolve_result
 
 
 def _service(client: FakeDnsClient) -> DnsProvisioningService:
@@ -78,11 +74,20 @@ def test_deprovision_removes_the_record_for_the_built_fqdn() -> None:
     assert client.deleted == ["api.alpha.coderhivex.com"]
 
 
-def test_check_status_reports_fqdn_and_propagation() -> None:
+def test_check_status_reports_propagated_true_once_the_record_exists() -> None:
     client = FakeDnsClient()
-    client.resolve_result = True
     service = _service(client)
+    service.provision("api", "alpha")
 
     result = service.check_status("api", "alpha")
 
     assert result == {"fqdn": "api.alpha.coderhivex.com", "propagated": True}
+
+
+def test_check_status_reports_propagated_false_when_no_record_exists() -> None:
+    client = FakeDnsClient()
+    service = _service(client)
+
+    result = service.check_status("api", "alpha")
+
+    assert result == {"fqdn": "api.alpha.coderhivex.com", "propagated": False}

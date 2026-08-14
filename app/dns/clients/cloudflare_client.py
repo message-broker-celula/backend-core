@@ -18,10 +18,6 @@ from app.dns.exceptions.dns_exceptions import DnsProviderError, DnsRecordConflic
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.cloudflare.com/client/v4"
-# Cloudflare's own DNS-over-HTTPS resolver -- querying it directly (instead
-# of the local/system resolver) avoids false negatives from a stale
-# intermediate resolver cache while checking propagation right after create.
-_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
 
 class CloudflareDnsClient:
@@ -38,7 +34,17 @@ class CloudflareDnsClient:
         }
 
     def record_exists(self, fqdn: str) -> bool:
-        """Return whether an A record already exists for the given FQDN."""
+        """Return whether an A record already exists for the given FQDN.
+
+        Also doubles as the "is this record active" check DnsProvisioningService
+        uses -- every record this client creates has `proxied: True`, so public
+        DNS resolution (even Cloudflare's own DNS-over-HTTPS resolver) never
+        returns the origin IP for it, only Cloudflare's edge IPs. Comparing a
+        resolved answer against the origin IP would therefore report "not
+        propagated" forever. Cloudflare is authoritative for its own zone, so
+        checking the record's existence via its API is both correct and
+        effectively instant -- no propagation delay to account for.
+        """
 
         return self._find_record_id(fqdn) is not None
 
@@ -71,24 +77,6 @@ class CloudflareDnsClient:
         if record_id is None:
             return
         self._request("DELETE", f"/zones/{self._zone_id}/dns_records/{record_id}")
-
-    def resolves_to(self, fqdn: str, expected_ip: str) -> bool:
-        """Return whether fqdn currently resolves to expected_ip via DNS-over-HTTPS."""
-
-        try:
-            response = httpx.get(
-                _DOH_URL,
-                params={"name": fqdn, "type": "A"},
-                headers={"Accept": "application/dns-json"},
-                timeout=self._timeout,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.warning("DNS propagation check failed for %s", fqdn, exc_info=exc)
-            return False
-
-        answers = response.json().get("Answer", [])
-        return any(answer.get("data") == expected_ip for answer in answers)
 
     def _find_record_id(self, fqdn: str) -> str | None:
         response = self._request(
