@@ -80,3 +80,7 @@ class DatabaseManagementRepositoryProtocol(Protocol):
     def list_assigned_ports(self) -> tuple[int, ...]:
         """Return host ports already assigned to active provisioned engines (fn_PuertosAsignados)."""
         ...
+
+    def list_engines(self) -> tuple[Mapping[str, Any], ...]:
+        """Return the active engine/version catalog (fn_MotoresDisponibles)."""
+        ...

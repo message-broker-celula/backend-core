@@ -382,6 +382,14 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
             if row.get("puerto") is not None
         )
 
+    def list_engines(self) -> tuple[Mapping[str, Any], ...]:
+        result = self._executor.execute_sql(
+            "SELECT * FROM fn_MotoresDisponibles();",
+            (),
+            procedure_name="fn_MotoresDisponibles",
+        )
+        return result.rows
+
     def get_public_metrics(self) -> Mapping[str, Any]:
         result = self._executor.execute_sql(
             "SELECT * FROM dbo.fn_MetricasPublicas();",

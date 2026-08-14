@@ -25,6 +25,7 @@ from app.databases.schemas.database_schemas import (
     DatabaseListResponse,
     DatabaseUsage,
     DaysRemainingResponse,
+    EngineListResponse,
     SpacePercentageResponse,
     UpdateDatabaseSpaceRequest,
     UpdateDatabaseSpaceResponse,
@@ -150,6 +151,24 @@ def list_databases(current_user: CurrentUser, service: Service) -> DatabaseListR
         raise _unavailable(exc) from exc
 
     return DatabaseListResponse(databases=databases)
+
+
+@router.get(
+    "/engines",
+    response_model=EngineListResponse,
+    summary="List engines available for provisioning",
+)
+def list_available_engines(current_user: CurrentUser, service: Service) -> EngineListResponse:
+    """List engine/version combinations the caller may request from `POST /databases`.
+
+    Registered before `/{database_id}` so "engines" is never captured as a
+    database_id path parameter.
+    """
+
+    try:
+        return EngineListResponse(engines=service.list_available_engines())
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
 
 
 @router.get(

@@ -4,19 +4,23 @@ from app.auth.dependencies.auth_dependencies import get_current_user
 from app.auth.schemas.auth_schemas import AuthenticatedUser
 from app.core.security import create_access_token, decode_access_token
 from app.databases.api.database_routes import get_database_service
-from app.databases.schemas.database_schemas import DatabaseActionResponse, DatabaseStatus
+from app.databases.schemas.database_schemas import DatabaseActionResponse, DatabaseStatus, EngineOption
 from app.main import app
 
 
 class FakeDatabaseService:
-    def __init__(self) -> None:
+    def __init__(self, engines: list | None = None) -> None:
         self.received_payload: dict | None = None
+        self.engines = engines or []
 
     def create_database(self, subject, payload, ip):
         self.received_payload = dict(payload)
         return DatabaseActionResponse(
             database_id="db-1", status=DatabaseStatus.ACTIVE, detail="Database created"
         )
+
+    def list_available_engines(self):
+        return self.engines
 
 
 def _client(fake_service: FakeDatabaseService) -> TestClient:
@@ -47,6 +51,27 @@ def test_create_database_accepts_a_fully_empty_body() -> None:
     assert fake_service.received_payload["nombre_motor"] == "MYSQL"
     assert fake_service.received_payload["version_motor"] == "8.4"
     assert fake_service.received_payload["nombre_bd"] == ""
+
+
+def test_list_available_engines_returns_the_service_result() -> None:
+    fake_service = FakeDatabaseService(
+        engines=[
+            EngineOption(nombre_motor="MYSQL", version_motor="8.4"),
+            EngineOption(nombre_motor="POSTGRES", version_motor="16"),
+        ]
+    )
+    client = _client(fake_service)
+    token = create_access_token(subject="user-1")
+
+    response = client.get("/databases/engines", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "engines": [
+            {"nombre_motor": "MYSQL", "version_motor": "8.4"},
+            {"nombre_motor": "POSTGRES", "version_motor": "16"},
+        ]
+    }
 
 
 def test_create_database_still_honors_explicit_fields() -> None:

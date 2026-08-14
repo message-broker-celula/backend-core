@@ -62,6 +62,17 @@ class DatabaseProvisioningService:
         self._password_length = password_length
         self._port_allocation_attempts = port_allocation_attempts
 
+    @property
+    def supported_engines(self) -> frozenset[str]:
+        """Engines this deployment can actually provision (config-gated).
+
+        The single source of truth `list_available_engines` filters the SQL
+        `Motores` catalog against, so a caller never sees an engine offered
+        that `provision()` would then reject.
+        """
+
+        return frozenset(self._supported_engines)
+
     def provision(self, *, engine: str, version: str, requested_name: str) -> ProvisionedDatabase:
         """Provision a new, ready engine container and return real connection details.
 

@@ -22,6 +22,7 @@ from app.databases.schemas.database_schemas import (
     DatabaseInstance,
     DatabaseStatus,
     DatabaseUsage,
+    EngineOption,
     UpdateDatabaseSpaceResponse,
     ValidateConnectionResponse,
 )
@@ -102,6 +103,27 @@ class DatabaseService:
             status=DatabaseStatus.ACTIVE,
             detail="Database created",
         )
+
+    def list_available_engines(self) -> list[EngineOption]:
+        """List engine/version combinations this deployment can provision.
+
+        Intersects the SQL `Motores` catalog (what's registered as a valid
+        engine at all) with `provisioning_supported_engines` (what this
+        deployment's provisioner sidecar can actually run) -- a row present
+        in `Motores` but not config-enabled (e.g. SQLSERVER, ORACLE) would
+        otherwise be offered by the UI only to fail at creation time.
+        """
+
+        supported = self._provisioning.supported_engines
+        engines: list[EngineOption] = []
+        for row in self._repository.list_engines():
+            data = normalize_row(row)
+            nombre_motor = str(pick_first(data, "nombre_motor", "nombre") or "").upper()
+            if nombre_motor not in supported:
+                continue
+            version_motor = str(pick_first(data, "version_motor", "version") or "")
+            engines.append(EngineOption(nombre_motor=nombre_motor, version_motor=version_motor))
+        return engines
 
     def list_databases(self, subject: str) -> list[DatabaseInstance]:
         """List the database instances owned by the subject."""

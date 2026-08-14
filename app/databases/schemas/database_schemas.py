@@ -30,12 +30,12 @@ class CreateDatabaseRequest(BaseModel):
     (see app.provisioning) before calling sp_CrearBD; SQL Server only stores
     and encrypts them, it does not invent them.
 
-    All fields are optional with defaults: the frontend's post-login
-    auto-provisioning call (`useProvisioning` in the landing app) sends a
-    fully empty body by design -- there is no engine/version/name picker in
-    the UI, it just asks for "a database". `nombre_bd` defaulting to "" is
-    intentional: DatabaseService/sanitize_database_name already turns an
-    empty requested name into a safe generated one.
+    All fields are optional with defaults for backward compatibility, but the
+    intended flow is an explicit choice: the frontend should call
+    `GET /databases/engines` to populate an engine/version picker and let the
+    user type `nombre_bd` themselves. An empty `nombre_bd` still works --
+    DatabaseService/sanitize_database_name turns it into a safe generated
+    name -- but is no longer the primary path now that a picker exists.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -47,6 +47,23 @@ class CreateDatabaseRequest(BaseModel):
     conexiones_maximas: int = 5
     ttl_dias: int = 30
     id_celula: str | None = None
+
+
+class EngineOption(BaseModel):
+    """One engine/version combination available for provisioning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nombre_motor: str
+    version_motor: str
+
+
+class EngineListResponse(BaseModel):
+    """Engines the caller may pass as `nombre_motor` to `POST /databases`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    engines: list[EngineOption] = Field(default_factory=list)
 
 
 class UpdateDatabaseSpaceRequest(BaseModel):

@@ -8,7 +8,11 @@ from app.repositories.exceptions.database_exceptions import BusinessRuleViolatio
 
 
 class FakeProvisioning:
-    def __init__(self, provisioned: ProvisionedDatabase | None = None) -> None:
+    def __init__(
+        self,
+        provisioned: ProvisionedDatabase | None = None,
+        supported_engines: frozenset[str] = frozenset({"MYSQL", "POSTGRES"}),
+    ) -> None:
         self.provisioned = provisioned or ProvisionedDatabase(
             host="db.example.com",
             port=30000,
@@ -21,6 +25,7 @@ class FakeProvisioning:
         self.deprovisioned: list[int] = []
         self.stopped: list[int] = []
         self.started: list[int] = []
+        self.supported_engines = supported_engines
 
     def provision(self, *, engine: str, version: str, requested_name: str) -> ProvisionedDatabase:
         self.provision_calls.append(
@@ -39,7 +44,12 @@ class FakeProvisioning:
 
 
 class FakeRepository:
-    def __init__(self, database_id: str = "db-1", row: dict | None = None) -> None:
+    def __init__(
+        self,
+        database_id: str = "db-1",
+        row: dict | None = None,
+        engine_rows: tuple[dict, ...] = (),
+    ) -> None:
         self.database_id = database_id
         self.row = row if row is not None else {"puerto": 30000}
         self.create_payload: dict | None = None
@@ -47,6 +57,10 @@ class FakeRepository:
         self.paused = False
         self.resumed = False
         self.fail_create = False
+        self.engine_rows = engine_rows
+
+    def list_engines(self):
+        return self.engine_rows
 
     def create_database(self, subject, payload, ip):
         self.create_payload = payload
@@ -149,6 +163,31 @@ def test_delete_database_raises_when_row_has_no_port() -> None:
 
     with pytest.raises(ProvisioningError):
         service.delete_database("user-1", "db-1", None)
+
+
+def test_list_available_engines_filters_catalog_by_supported_engines() -> None:
+    # Motores has SQLSERVER registered (id=4 in production), but this
+    # deployment's provisioner sidecar only actually knows how to run MYSQL
+    # and POSTGRES -- SQLSERVER must never be offered to the picker even
+    # though it's a valid catalog row, or creation would 400 right after.
+    provisioning = FakeProvisioning(supported_engines=frozenset({"MYSQL", "POSTGRES"}))
+    repository = FakeRepository(
+        engine_rows=(
+            {"nombre_motor": "MYSQL", "version_motor": "8.0"},
+            {"nombre_motor": "MYSQL", "version_motor": "8.4"},
+            {"nombre_motor": "POSTGRES", "version_motor": "16"},
+            {"nombre_motor": "SQLSERVER", "version_motor": "2022"},
+        )
+    )
+    service = DatabaseService(repository=repository, provisioning=provisioning)
+
+    engines = service.list_available_engines()
+
+    assert [(e.nombre_motor, e.version_motor) for e in engines] == [
+        ("MYSQL", "8.0"),
+        ("MYSQL", "8.4"),
+        ("POSTGRES", "16"),
+    ]
 
 
 def test_get_credentials_merges_host_port_name_from_the_database_row() -> None:

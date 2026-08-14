@@ -104,6 +104,9 @@ Mismo bug de prefijo que la anterior, mismo fix.
 ### `fn_PuertosAsignados()` — TVF, sin parámetros
 **Nueva esta sesión.** Devuelve los puertos host ya asignados a BDs no eliminadas — el backend la usa como optimización para evitar colisiones al elegir un puerto nuevo (`PortAllocator`); si la función falla o no existe, el backend igual funciona cayendo a asignación aleatoria + reintento ante conflicto real de Docker, así que nunca fue un bloqueante duro, solo reduce reintentos.
 
+### `fn_MotoresDisponibles()` — TVF, sin parámetros
+**Nueva esta sesión.** `SELECT nombre AS nombre_motor, version AS version_motor FROM Motores WHERE activo = 1`. Backea `GET /databases/engines`. Devuelve **todo** lo que está activo en el catálogo `Motores` (hoy incluye `SQLSERVER`), no solo lo que el provisioner puede aprovisionar de verdad — es `DatabaseService.list_available_engines` (Python) quien filtra el resultado contra `PROVISIONING_SUPPORTED_ENGINES` (hoy `MYSQL,POSTGRES`) antes de devolverlo, para no ofrecer en el picker un motor que luego fallaría al crear.
+
 ### `fn_MetricasPublicas()` — TVF, sin parámetros
 **Nueva esta sesión.** Backea `GET /metrics` (landing page). Una sola fila:
 
