@@ -55,7 +55,7 @@ def _service(client: FakeProvisionerClient, allocator: FakePortAllocator) -> Dat
         client=client,
         port_allocator=allocator,
         public_host="db.example.com",
-        supported_engines=["MYSQL"],
+        supported_engines=["MYSQL", "POSTGRES"],
         password_length=24,
         port_allocation_attempts=5,
     )
@@ -65,7 +65,20 @@ def test_provision_rejects_unsupported_engine_as_business_rule_violation() -> No
     service = _service(FakeProvisionerClient(), FakePortAllocator([30000]))
 
     with pytest.raises(BusinessRuleViolationError):
-        service.provision(engine="POSTGRES", version="16", requested_name="db")
+        service.provision(engine="ORACLE", version="19", requested_name="db")
+
+
+def test_provision_postgres_returns_real_connection_details_on_success() -> None:
+    client = FakeProvisionerClient()
+    service = _service(client, FakePortAllocator([30000]))
+
+    result = service.provision(engine="POSTGRES", version="16", requested_name="My DB")
+
+    assert result.host == "db.example.com"
+    assert result.port == 30000
+    assert result.database_name == "my_db"
+    assert result.container_name == "dbinst-30000"
+    assert client.created == [{"engine": "postgres", "host_port": 30000, "name": "dbinst-30000"}]
 
 
 def test_provision_returns_real_connection_details_on_success() -> None:

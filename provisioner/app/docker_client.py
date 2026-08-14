@@ -32,6 +32,14 @@ class ContainerNotFoundError(Exception):
     """Raised when an operation targets a container that does not exist."""
 
 
+class CapacityExceededError(Exception):
+    """Raised when creating another container would exceed the configured
+    concurrency cap for provisioned database instances."""
+
+
+_PROVISIONED_NAME_PREFIX = "dbinst-"
+
+
 def _volume_name_for(container_name: str) -> str:
     return f"dbdata_{container_name}"
 
@@ -42,22 +50,35 @@ class DockerProvisionerClient:
     def __init__(
         self,
         network: str,
-        mem_limit: str,
-        cpu_limit: float,
         host_bind_address: str,
         readiness_timeout_seconds: int,
         readiness_poll_interval_seconds: float,
+        max_concurrent_containers: int,
     ) -> None:
         """Initialize the Docker client and ensure the target network exists."""
 
         self._client = docker.from_env()
         self._network = network
-        self._mem_limit = mem_limit
-        self._cpu_limit = cpu_limit
         self._host_bind_address = host_bind_address
         self._readiness_timeout_seconds = readiness_timeout_seconds
         self._readiness_poll_interval_seconds = readiness_poll_interval_seconds
+        self._max_concurrent_containers = max_concurrent_containers
         self._ensure_network()
+
+    def _provisioned_container_count(self) -> int:
+        """Count currently running provisioned database instances.
+
+        Scoped to the `dbinst-*` naming convention so the production SQL
+        Server and the backend/provisioner/landing containers -- none of
+        which follow this naming pattern -- are never counted against the
+        cap.
+        """
+
+        return len(
+            self._client.containers.list(
+                filters={"name": _PROVISIONED_NAME_PREFIX, "status": "running"}
+            )
+        )
 
     def _ensure_network(self) -> None:
         try:
@@ -87,11 +108,18 @@ class DockerProvisionerClient:
         Raises:
             UnsupportedEngineError: When `engine` has no registered EngineSpec.
             PortInUseError: When Docker refuses to bind `host_port`.
+            CapacityExceededError: When the VPS is already running the
+                configured maximum number of provisioned instances.
         """
 
         spec = get_engine_spec(engine)
         if spec is None:
             raise UnsupportedEngineError(engine)
+
+        if self._provisioned_container_count() >= self._max_concurrent_containers:
+            raise CapacityExceededError(
+                f"At capacity: {self._max_concurrent_containers} provisioned instances already running"
+            )
 
         environment = spec.env_builder(database_name, username, password, root_password)
 
@@ -101,11 +129,12 @@ class DockerProvisionerClient:
                 name=name,
                 detach=True,
                 environment=environment,
+                command=spec.command,
                 ports={f"{spec.internal_port}/tcp": (self._host_bind_address, host_port)},
                 network=self._network,
-                mem_limit=self._mem_limit,
-                nano_cpus=int(self._cpu_limit * 1_000_000_000),
-                mounts=[Mount(target="/var/lib/mysql", source=_volume_name_for(name), type="volume")],
+                mem_limit=spec.mem_limit,
+                nano_cpus=int(spec.cpu_limit * 1_000_000_000),
+                mounts=[Mount(target=spec.data_dir, source=_volume_name_for(name), type="volume")],
                 restart_policy={"Name": "unless-stopped"},
             )
         except APIError as exc:

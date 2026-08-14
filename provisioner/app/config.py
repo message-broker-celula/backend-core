@@ -22,13 +22,6 @@ class Settings(BaseSettings):
 
     shared_secret: str = ""
     docker_network: str = "provisioned_net"
-    # MySQL 8.4's default my.cnf (InnoDB buffer pool + performance_schema +
-    # per-connection buffers) does not reliably start under ~300-400m --
-    # 512m is a safe floor confirmed against a real OOMKilled=true crash
-    # loop at 256m. Tune down per-engine later if a smaller footprint is
-    # confirmed safe for the actual quota tiers offered.
-    container_mem_limit: str = "512m"
-    container_cpu_limit: float = 0.5
     host_bind_address: str = "0.0.0.0"
     # 30s was too tight against real production MySQL first-boot latency on
     # a modest VPS (confirmed: a real create hit this ceiling exactly and
@@ -36,6 +29,15 @@ class Settings(BaseSettings):
     # runs had already taken 30-50s end-to-end). 60s gives real headroom.
     readiness_timeout_seconds: int = 60
     readiness_poll_interval_seconds: float = 1.0
+    # Hard ceiling on simultaneously running provisioned instances (any
+    # engine combined), independent of each engine's own mem_limit in
+    # engines.py. This VPS has ~3.7GB total RAM shared with the actual
+    # production SQL Server (not a container this process manages) plus
+    # backend-core-backend/provisioner/landing -- there is no safe way to
+    # let provisioned containers grow unbounded. 6 is a conservative number
+    # confirmed against real headroom measured in production (~1.2GB free
+    # after accounting for everything else); revisit if the VPS is resized.
+    max_concurrent_containers: int = 6
 
 
 settings = Settings()

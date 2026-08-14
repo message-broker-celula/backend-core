@@ -4,6 +4,7 @@ import pytest
 from docker.errors import APIError, NotFound
 
 from app.docker_client import (
+    CapacityExceededError,
     ContainerNotFoundError,
     DockerProvisionerClient,
     PortInUseError,
@@ -11,20 +12,20 @@ from app.docker_client import (
 )
 
 
-def _fake_docker() -> MagicMock:
+def _fake_docker(running_count: int = 0) -> MagicMock:
     fake = MagicMock()
     fake.networks.get.side_effect = NotFound("missing")
+    fake.containers.list.return_value = [MagicMock() for _ in range(running_count)]
     return fake
 
 
 def _make_client(fake_docker_client: MagicMock, **overrides: object) -> DockerProvisionerClient:
     kwargs = {
         "network": "test_net",
-        "mem_limit": "128m",
-        "cpu_limit": 0.25,
         "host_bind_address": "0.0.0.0",
         "readiness_timeout_seconds": 0.05,
         "readiness_poll_interval_seconds": 0.01,
+        "max_concurrent_containers": 6,
         **overrides,
     }
     with patch("app.docker_client.docker.from_env", return_value=fake_docker_client):
@@ -44,8 +45,8 @@ def test_create_container_raises_unsupported_engine() -> None:
 
     with pytest.raises(UnsupportedEngineError):
         client.create_container(
-            engine="postgres",
-            version="16",
+            engine="oracle",
+            version="19",
             name="dbinst-1",
             host_port=1,
             database_name="db",
@@ -53,6 +54,71 @@ def test_create_container_raises_unsupported_engine() -> None:
             password="p",
             root_password="r",
         )
+
+
+def test_create_container_uses_the_engines_own_mem_and_cpu_limits() -> None:
+    fake = _fake_docker()
+    fake_container = MagicMock()
+    fake_container.status = "running"
+    fake_container.exec_run.return_value = (0, b"")
+    fake.containers.run.return_value = fake_container
+    client = _make_client(fake)
+
+    client.create_container(
+        engine="postgres",
+        version="16",
+        name="dbinst-30003",
+        host_port=30003,
+        database_name="db",
+        username="u",
+        password="p",
+        root_password="r",
+    )
+
+    _, kwargs = fake.containers.run.call_args
+    assert kwargs["mem_limit"] == "192m"
+    assert kwargs["nano_cpus"] == int(0.3 * 1_000_000_000)
+    assert kwargs["mounts"][0].get("Target") == "/var/lib/postgresql/data"
+
+
+def test_create_container_raises_when_at_capacity() -> None:
+    fake = _fake_docker(running_count=6)
+    client = _make_client(fake, max_concurrent_containers=6)
+
+    with pytest.raises(CapacityExceededError):
+        client.create_container(
+            engine="mysql",
+            version="8.4",
+            name="dbinst-30004",
+            host_port=30004,
+            database_name="db",
+            username="u",
+            password="p",
+            root_password="r",
+        )
+    fake.containers.run.assert_not_called()
+
+
+def test_create_container_allows_one_more_below_capacity() -> None:
+    fake = _fake_docker(running_count=5)
+    fake_container = MagicMock()
+    fake_container.status = "running"
+    fake_container.exec_run.return_value = (0, b"")
+    fake.containers.run.return_value = fake_container
+    client = _make_client(fake, max_concurrent_containers=6)
+
+    ready = client.create_container(
+        engine="mysql",
+        version="8.4",
+        name="dbinst-30005",
+        host_port=30005,
+        database_name="db",
+        username="u",
+        password="p",
+        root_password="r",
+    )
+
+    assert ready is True
 
 
 def test_create_container_maps_port_conflict_to_port_in_use_error() -> None:

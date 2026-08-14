@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.docker_client import ContainerNotFoundError, PortInUseError
+from app.docker_client import CapacityExceededError, ContainerNotFoundError, PortInUseError
 from app.main import app, get_client
 
 settings.shared_secret = "test-secret"
@@ -74,6 +74,14 @@ def test_create_container_port_conflict_returns_409(client: TestClient, fake_cli
 
     assert response.status_code == 409
     assert response.json()["detail"] == "port_in_use"
+
+
+def test_create_container_at_capacity_returns_503(client: TestClient, fake_client: MagicMock) -> None:
+    fake_client.create_container.side_effect = CapacityExceededError("At capacity")
+
+    response = client.post("/containers", json=_PAYLOAD, headers=_HEADERS)
+
+    assert response.status_code == 503
 
 
 def test_stop_container_not_found_returns_404(client: TestClient, fake_client: MagicMock) -> None:

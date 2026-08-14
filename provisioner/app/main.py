@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import settings
 from app.docker_client import (
+    CapacityExceededError,
     ContainerNotFoundError,
     DockerProvisionerClient,
     PortInUseError,
@@ -44,11 +45,10 @@ def get_client() -> DockerProvisionerClient:
     if _client is None:
         _client = DockerProvisionerClient(
             network=settings.docker_network,
-            mem_limit=settings.container_mem_limit,
-            cpu_limit=settings.container_cpu_limit,
             host_bind_address=settings.host_bind_address,
             readiness_timeout_seconds=settings.readiness_timeout_seconds,
             readiness_poll_interval_seconds=settings.readiness_poll_interval_seconds,
+            max_concurrent_containers=settings.max_concurrent_containers,
         )
     return _client
 
@@ -96,6 +96,8 @@ def create_container(payload: CreateContainerRequest, client: Client) -> CreateC
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported engine '{exc}'"
         ) from exc
+    except CapacityExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
     return CreateContainerResponse(container_id=payload.name, ready=ready)
 
