@@ -81,9 +81,15 @@ def _business_error(exc: BusinessRuleViolationError) -> HTTPException:
 )
 def issue_api_key(
     request: Request,
-    payload: RegisterAiKeyRequest,
     current_user: CurrentUser,
     service: Service,
+    # Parameter-level default, not just field-level: FastAPI requires the
+    # body *parameter itself* to have a default before a fully empty
+    # request body is accepted -- field defaults on RegisterAiKeyRequest
+    # alone aren't enough. Same gap as CreateDatabaseRequest had for
+    # POST /databases; the frontend's "Generar API Key" button sends no
+    # body at all, which 422'd on "body: Field required" before this.
+    payload: RegisterAiKeyRequest = RegisterAiKeyRequest(),
 ) -> AiKeyIssuedResponse:
     """Register a new gateway client for the authenticated user."""
 
