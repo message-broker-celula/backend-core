@@ -7,6 +7,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.admin.api.admin_routes import router as admin_router
+from app.ai.api.ai_routes import router as ai_router
 from app.audit.api.audit_routes import router as audit_router
 from app.auth.api.oauth_routes import router as auth_router
 from app.celulas.api.celula_routes import router as celulas_router
@@ -52,6 +53,7 @@ app.include_router(admin_router)
 app.include_router(celulas_router)
 app.include_router(audit_router)
 app.include_router(metrics_router)
+app.include_router(ai_router)
 
 app.add_middleware(
     TrustedHostMiddleware,

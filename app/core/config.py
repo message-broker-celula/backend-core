@@ -109,6 +109,19 @@ class DnsSettings(BaseModel):
     request_timeout_seconds: int
 
 
+class AiGatewaySettings(BaseModel):
+    """AI-as-a-service configuration (Ollama Gateway, a separate team's service).
+
+    This backend only orchestrates issuance/rotation/revocation/usage
+    visibility -- actual inference calls (`/v1/chat/completions`, etc.) go
+    directly from the end user's own application to the gateway using the
+    OpenAI SDK, never proxied through this backend.
+    """
+
+    base_url: str
+    request_timeout_seconds: int
+
+
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -218,6 +231,12 @@ class Settings(BaseSettings):
     # otherwise unrelated (Docker provisioning vs public DNS).
     dns_target_ip: str = Field(default="")
     dns_request_timeout_seconds: int = Field(default=15)
+
+    # AI-as-a-service (Ollama Gateway -- a separate team's already-built,
+    # OpenAI-compatible service). This backend only handles key issuance/
+    # rotation/revocation/usage visibility, never proxies inference calls.
+    ai_gateway_base_url: str = Field(default="https://docs.api.idempotencia.andrescortes.dev")
+    ai_gateway_request_timeout_seconds: int = Field(default=30)
 
     @property
     def app(self) -> AppSettings:
@@ -348,6 +367,15 @@ class Settings(BaseSettings):
             root_domain=self.dns_root_domain,
             target_ip=self.dns_target_ip,
             request_timeout_seconds=self.dns_request_timeout_seconds,
+        )
+
+    @property
+    def ai_gateway(self) -> AiGatewaySettings:
+        """AI-as-a-service (Ollama Gateway) settings."""
+
+        return AiGatewaySettings(
+            base_url=self.ai_gateway_base_url.rstrip("/"),
+            request_timeout_seconds=self.ai_gateway_request_timeout_seconds,
         )
 
 

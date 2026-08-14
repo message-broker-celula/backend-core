@@ -604,6 +604,82 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         )
 
     # ------------------------------------------------------------------
+    # AI Gateway keys
+    # ------------------------------------------------------------------
+
+    def get_user_profile(self, subject: str) -> Mapping[str, Any]:
+        result = self._executor.execute_sql(
+            "SELECT * FROM dbo.fn_ObtenerPerfilUsuario(?);",
+            (subject,),
+            procedure_name="fn_ObtenerPerfilUsuario",
+        )
+        return self._first_row(result.rows, "fn_ObtenerPerfilUsuario")
+
+    def register_ai_key(
+        self,
+        subject: str,
+        gateway_client_id: int,
+        key_prefix: str,
+        api_key: str,
+        ip: str | None = None,
+    ) -> Mapping[str, Any]:
+        sql = """
+            DECLARE @id_clave_ia UNIQUEIDENTIFIER;
+
+            EXEC sp_RegistrarClaveIA
+                @id_usuario = ?,
+                @gateway_client_id = ?,
+                @key_prefix = ?,
+                @api_key = ?,
+                @ip = ?,
+                @id_clave_ia = @id_clave_ia OUTPUT;
+
+            SELECT @id_clave_ia AS id_clave_ia;
+        """
+        result = self._executor.execute_sql(
+            sql,
+            (subject, gateway_client_id, key_prefix, api_key, ip),
+            procedure_name="sp_RegistrarClaveIA",
+        )
+        return self._first_row(result.rows, "sp_RegistrarClaveIA")
+
+    def get_ai_key(self, subject: str) -> Mapping[str, Any]:
+        result = self._executor.execute_sql(
+            "EXEC sp_ObtenerClaveIA @id_usuario = ?;",
+            (subject,),
+            procedure_name="sp_ObtenerClaveIA",
+        )
+        return self._first_row(result.rows, "sp_ObtenerClaveIA")
+
+    def rotate_ai_key(
+        self,
+        subject: str,
+        gateway_client_id: int,
+        key_prefix: str,
+        api_key: str,
+        ip: str | None = None,
+    ) -> None:
+        self._executor.execute_sql(
+            """
+            EXEC sp_RotarClaveIA
+                @id_usuario = ?,
+                @gateway_client_id = ?,
+                @key_prefix = ?,
+                @api_key = ?,
+                @ip = ?;
+            """,
+            (subject, gateway_client_id, key_prefix, api_key, ip),
+            procedure_name="sp_RotarClaveIA",
+        )
+
+    def revoke_ai_key(self, subject: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_RevocarClaveIA @id_usuario = ?, @ip = ?;",
+            (subject, ip),
+            procedure_name="sp_RevocarClaveIA",
+        )
+
+    # ------------------------------------------------------------------
     # Mapping helpers
     # ------------------------------------------------------------------
 
