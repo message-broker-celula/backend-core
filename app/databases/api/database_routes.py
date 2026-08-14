@@ -111,9 +111,16 @@ def _touch_database(
 )
 def create_database(
     request: Request,
-    payload: CreateDatabaseRequest,
     current_user: CurrentUser,
     service: Service,
+    # Default instance, not just default fields: the landing app's
+    # post-login auto-provisioning call sends a completely empty body (no
+    # engine/version/name picker in the UI) -- FastAPI requires the body
+    # *parameter itself* to have a default before an empty request body is
+    # accepted at all, field-level defaults on CreateDatabaseRequest alone
+    # are not enough (confirmed: an empty body 422s on "body: Field
+    # required" before Pydantic ever gets to apply its own field defaults).
+    payload: CreateDatabaseRequest = CreateDatabaseRequest(),
 ) -> DatabaseActionResponse:
     """Provision a new database instance for the authenticated user."""
 

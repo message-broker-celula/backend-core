@@ -29,13 +29,20 @@ class CreateDatabaseRequest(BaseModel):
     container via the provisioning sidecar and generates these values itself
     (see app.provisioning) before calling sp_CrearBD; SQL Server only stores
     and encrypts them, it does not invent them.
+
+    All fields are optional with defaults: the frontend's post-login
+    auto-provisioning call (`useProvisioning` in the landing app) sends a
+    fully empty body by design -- there is no engine/version/name picker in
+    the UI, it just asks for "a database". `nombre_bd` defaulting to "" is
+    intentional: DatabaseService/sanitize_database_name already turns an
+    empty requested name into a safe generated one.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    nombre_motor: str = Field(..., examples=["MYSQL"])
-    version_motor: str = Field(..., examples=["8.4"])
-    nombre_bd: str
+    nombre_motor: str = Field(default="MYSQL", examples=["MYSQL"])
+    version_motor: str = Field(default="8.4", examples=["8.4"])
+    nombre_bd: str = ""
     espacio_maximo_mb: int = 20
     conexiones_maximas: int = 5
     ttl_dias: int = 30
