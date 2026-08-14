@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     container_mem_limit: str = "512m"
     container_cpu_limit: float = 0.5
     host_bind_address: str = "0.0.0.0"
-    readiness_timeout_seconds: int = 30
+    # 30s was too tight against real production MySQL first-boot latency on
+    # a modest VPS (confirmed: a real create hit this ceiling exactly and
+    # failed with ProvisioningTimeoutError even though earlier successful
+    # runs had already taken 30-50s end-to-end). 60s gives real headroom.
+    readiness_timeout_seconds: int = 60
     readiness_poll_interval_seconds: float = 1.0
 
 
