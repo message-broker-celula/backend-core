@@ -150,9 +150,24 @@ class DatabaseService:
         )
 
     def get_credentials(self, subject: str, database_id: str | None = None) -> DatabaseCredentials:
-        """Fetch connection credentials for the subject's database."""
+        """Fetch connection credentials for the subject's database.
 
-        raw_credentials = self._repository.get_database_credentials(subject, database_id or "")
+        sp_ObtenerCredenciales only returns usuario_bd/password_bd/algoritmo
+        (the encrypted columns) -- host/puerto/nombre_bd live on the
+        BasesDeDatos row itself, already available via get_database. Merged
+        here so callers get one complete DatabaseCredentials instead of
+        having to combine two endpoints themselves.
+        """
+
+        raw_credentials = dict(self._repository.get_database_credentials(subject, database_id or ""))
+        if database_id:
+            try:
+                data = normalize_row(self._repository.get_database(subject, database_id))
+                raw_credentials.setdefault("host", pick_first(data, "host"))
+                raw_credentials.setdefault("puerto", pick_first(data, "puerto"))
+                raw_credentials.setdefault("nombre_bd", pick_first(data, "nombre_bd"))
+            except RepositoryMappingError:
+                pass
         return self._to_credentials(raw_credentials)
 
     def get_usage(self, subject: str, database_id: str) -> DatabaseUsage:

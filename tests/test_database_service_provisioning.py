@@ -57,6 +57,9 @@ class FakeRepository:
     def get_database(self, subject, database_id):
         return self.row
 
+    def get_database_credentials(self, subject, database_id):
+        return {"usuario_bd": "app_user", "password_bd": "secret", "algoritmo": "AES256"}
+
     def delete_database(self, subject, database_id, ip=None):
         self.deleted = True
 
@@ -146,3 +149,20 @@ def test_delete_database_raises_when_row_has_no_port() -> None:
 
     with pytest.raises(ProvisioningError):
         service.delete_database("user-1", "db-1", None)
+
+
+def test_get_credentials_merges_host_port_name_from_the_database_row() -> None:
+    # sp_ObtenerCredenciales only returns usuario_bd/password_bd/algoritmo --
+    # host/puerto/nombre_bd live on the BasesDeDatos row itself (get_database),
+    # merged here so the dashboard doesn't need to combine two endpoints.
+    provisioning = FakeProvisioning()
+    repository = FakeRepository(row={"host": "db.example.com", "puerto": 30000, "nombre_bd": "my_db"})
+    service = DatabaseService(repository=repository, provisioning=provisioning)
+
+    credentials = service.get_credentials("user-1", "db-1")
+
+    assert credentials.host == "db.example.com"
+    assert credentials.port == 30000
+    assert credentials.database_name == "my_db"
+    assert credentials.username == "app_user"
+    assert credentials.password == "secret"
