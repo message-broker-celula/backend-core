@@ -201,14 +201,18 @@ GET /ai/usage?start=2026-08-01&end=2026-08-06   // ambos opcionales
 
 ## Estado real de verificación (importante)
 
-El código de ambas funcionalidades está desplegado y probado con tests
-unitarios, pero **ninguna de las dos se puede probar de punta a punta
-todavía** contra los servicios externos reales:
-
-- **DNS**: el token de Cloudflare sigue rechazando la IP del servidor
-  (falta que alguien ajuste el *Client IP Filtering* en su dashboard). Hasta
-  que eso se resuelva, `POST /celulas/{id}/services` va a responder `503`
-  aunque el resto del flujo esté bien conectado.
+- **DNS**: ✅ verificado de punta a punta contra producción con un token de
+  Cloudflare sin restricción de IP. `POST /celulas/{id}/services` crea el
+  registro `A` real (confirmado en la API de Cloudflare), `GET
+  .../dns-status` reporta `propagated: true` una vez creado (se corrigió un
+  bug real en el camino: comparaba la resolución DNS pública contra la IP de
+  origen, pero como todo registro acá es `proxied: true`, un resolver
+  público nunca devuelve esa IP, solo las de borde de Cloudflare — el check
+  nunca podía dar `true`. Ahora verifica existencia del registro vía la API
+  de Cloudflare, que es instantáneo por ser autoritativa), y `DELETE` borra
+  el registro real. También se encontró y arregló un bug de esquema
+  (`puerto_interno NOT NULL` bloqueaba cualquier subdominio sin base de
+  datos detrás) que rompía la creación incondicionalmente hasta ahora.
 - **IA**: el hostname ya se corrigió (`qa.api.idempotencia.andrescortes.dev`,
   confirmado en vivo, responde `/public/models` correctamente) y el backend
   ya le llega bien. Pero `POST /ai/api-key` sigue devolviendo `503` porque

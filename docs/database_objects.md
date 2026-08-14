@@ -53,6 +53,15 @@ Cambian `estado` entre `ACTIVA` ↔ `PAUSADA`, validando dueño y estado actual 
 
 **Llamados desde:** `pause_database`/`resume_database` ← `DatabaseService` ← `POST /databases/{id}/pause` y `/resume`.
 
+### `sp_CrearServicio`
+**Parámetros:** `@id_celula, @nombre_servicio, @puerto_interno, @id_bd, @id_usuario, @ip, @id_servicio OUTPUT`
+
+Crea un servicio/subdominio dentro de una célula (ver `Servicios` más abajo). Valida célula activa, BD referenciada (si aplica), nombre no repetido en la célula, y el límite de 5 subdominios activos por célula.
+
+> **Fix aplicado esta sesión:** `Servicios.puerto_interno` era `NOT NULL` y `@puerto_interno` no tenía default, pero un subdominio de solo-DNS (sin base de datos ni servicio real detrás, el alcance acordado para esta funcionalidad) legítimamente no tiene puerto interno. El backend ya mandaba `NULL` correctamente (`register_celula_service`'s `port: int | None = None`), pero nunca se había probado de punta a punta hasta la primera creación real contra producción, que reventó con una violación de `NOT NULL`. Se hizo `puerto_interno` nullable en la tabla y `@puerto_interno INT = NULL` en el SP.
+
+**Llamado desde:** `register_celula_service` ← `CelulaOrchestrationService.register_service` ← `POST /celulas/{id}/services`.
+
 ### `sp_EliminarBD`
 **Parámetros:** `@id_bd, @id_usuario, @ip`
 
