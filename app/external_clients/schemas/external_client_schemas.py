@@ -52,6 +52,23 @@ class CreateExternalDatabaseRequest(BaseModel):
     nombre_bd: str = ""
 
 
+class ExternalClientMetricsResponse(BaseModel):
+    """Aggregate view of the caller's own PostgreSQL usage.
+
+    Scoped strictly to the calling client's own databases (there is no
+    cross-client visibility here) -- generic by construction, so any team
+    that registers under /public/postgres/register gets the same metrics,
+    not just the first one that asked for it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_databases: int
+    active_databases: int
+    storage_used_mb: float
+    storage_limit_mb: float
+
+
 class ExternalClientActionResponse(BaseModel):
     """Generic acknowledgement returned after revoking a key."""
 

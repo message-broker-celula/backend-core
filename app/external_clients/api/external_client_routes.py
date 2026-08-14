@@ -26,6 +26,7 @@ from app.databases.schemas.database_schemas import (
     DatabaseActionResponse,
     DatabaseCredentials,
     DatabaseListResponse,
+    DatabaseStatus,
 )
 from app.databases.services.database_service import DatabaseService
 from app.external_clients.dependencies import (
@@ -36,6 +37,7 @@ from app.external_clients.schemas.external_client_schemas import (
     CreateExternalDatabaseRequest,
     ExternalClientActionResponse,
     ExternalClientKeyResponse,
+    ExternalClientMetricsResponse,
     RegisterExternalClientRequest,
 )
 from app.external_clients.services.external_client_service import ExternalClientService
@@ -138,6 +140,27 @@ def list_external_databases(current_client: ExternalClient, service: DbService) 
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
     return DatabaseListResponse(databases=databases)
+
+
+@router.get(
+    "/metrics",
+    response_model=ExternalClientMetricsResponse,
+    summary="Aggregate usage metrics for the caller's own PostgreSQL databases",
+)
+def get_external_metrics(current_client: ExternalClient, service: DbService) -> ExternalClientMetricsResponse:
+    """Scoped strictly to the caller -- no visibility into other clients' databases."""
+
+    try:
+        databases = service.list_databases(current_client.subject)
+    except DatabaseIntegrationError as exc:
+        raise _unavailable(exc) from exc
+
+    return ExternalClientMetricsResponse(
+        total_databases=len(databases),
+        active_databases=sum(1 for db in databases if db.status == DatabaseStatus.ACTIVE),
+        storage_used_mb=sum(db.storage_used_mb or 0 for db in databases),
+        storage_limit_mb=sum(db.storage_limit_mb or 0 for db in databases),
+    )
 
 
 @router.post(
