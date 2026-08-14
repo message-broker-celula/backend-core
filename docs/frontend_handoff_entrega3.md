@@ -209,10 +209,13 @@ todavía** contra los servicios externos reales:
   (falta que alguien ajuste el *Client IP Filtering* en su dashboard). Hasta
   que eso se resuelva, `POST /celulas/{id}/services` va a responder `503`
   aunque el resto del flujo esté bien conectado.
-- **IA**: el hostname que nos pasó el equipo de IA
-  (`docs.api.idempotencia.andrescortes.dev`) no está desplegado todavía —
-  no resuelve en DNS y el TLS falla. `POST /ai/api-key` va a responder
-  `503` hasta que ese servicio esté realmente arriba.
+- **IA**: el hostname ya se corrigió (`qa.api.idempotencia.andrescortes.dev`,
+  confirmado en vivo, responde `/public/models` correctamente) y el backend
+  ya le llega bien. Pero `POST /ai/api-key` sigue devolviendo `503` porque
+  el gateway responde `400`: `"EXTERNAL_OWNER_USER_ID=1 no existe en la
+  tabla Users. Crea la cuenta de servicio antes de habilitar el alta
+  externa."` — les falta un paso de configuración interna a ellos, no es
+  algo del lado de este backend.
 
 Recomendación: conecten el frontend contra este contrato ahora (para no
 bloquearse), y esperen la confirmación de que ambos externos ya responden
