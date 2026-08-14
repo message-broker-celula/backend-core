@@ -63,7 +63,7 @@ class FakeRepository:
     def pause_database(self, subject, database_id, ip=None):
         self.paused = True
 
-    def resume_database(self, subject, database_id):
+    def resume_database(self, subject, database_id, ip=None):
         self.resumed = True
 
 
@@ -128,11 +128,7 @@ def test_pause_database_stops_container_before_sp_pausar_bd() -> None:
     assert repository.paused is True
 
 
-def test_resume_database_starts_container_even_though_sp_reanudar_bd_is_missing() -> None:
-    # sp_ReanudarBD does not exist in SQL Server yet (see
-    # sqlserver_repository.py's resume_database) -- FakeRepository mirrors
-    # that by simply not raising, since this test isolates
-    # DatabaseService's own orchestration, not the real repository.
+def test_resume_database_starts_container_before_calling_sp_reanudar_bd() -> None:
     provisioning = FakeProvisioning()
     repository = FakeRepository()
     service = DatabaseService(repository=repository, provisioning=provisioning)

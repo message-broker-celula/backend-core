@@ -13,6 +13,7 @@ from app.celulas.api.celula_routes import router as celulas_router
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.databases.api.database_routes import router as databases_router
+from app.metrics.api.metrics_routes import router as metrics_router
 
 # -----------------------------------------------------------------------
 # Rate limiting a nivel de aplicacion (defensa en profundidad).
@@ -50,6 +51,7 @@ app.include_router(databases_router)
 app.include_router(admin_router)
 app.include_router(celulas_router)
 app.include_router(audit_router)
+app.include_router(metrics_router)
 
 app.add_middleware(
     TrustedHostMiddleware,

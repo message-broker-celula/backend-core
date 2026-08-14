@@ -191,21 +191,21 @@ class DatabaseService:
             detail="Database paused",
         )
 
-    def resume_database(self, subject: str, database_id: str) -> DatabaseActionResponse:
+    def resume_database(
+        self,
+        subject: str,
+        database_id: str,
+        ip: str | None = None,
+    ) -> DatabaseActionResponse:
         """Resume a previously paused database instance.
 
-        Restarts the real container -- the engine becomes reachable again --
-        but `self._repository.resume_database` still unconditionally raises
-        `RepositoryMappingError` today because `sp_ReanudarBD` does not exist
-        in SQL Server yet. That is a pre-existing, out-of-repo schema gap;
-        this method deliberately does not work around it in Python (see
-        sqlserver_repository.py's `resume_database`). The API call remains a
-        503 until that stored procedure is added.
+        Restarts the real container first, then flips the SQL Server status
+        flag back to ACTIVA via sp_ReanudarBD.
         """
 
         port = self._extract_port(self._repository.get_database(subject, database_id))
         self._provisioning.start(port=port)
-        self._repository.resume_database(subject, database_id)
+        self._repository.resume_database(subject, database_id, ip)
         logger.info(
             "Database resumed",
             extra={"subject": subject, "database_id": database_id},

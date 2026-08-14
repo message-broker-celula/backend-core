@@ -37,6 +37,8 @@ def test_row_to_database_instance_maps_real_sql_server_columns() -> None:
     assert instance.storage_limit_mb == 20
     assert instance.host == "mysql"
     assert instance.port == 3306
+    assert instance.engine == "MYSQL"
+    assert instance.last_activity == datetime(2026, 8, 11, 10, 0, tzinfo=timezone.utc)
 
 
 def test_row_to_database_instance_keeps_zero_storage_used_instead_of_dropping_it() -> None:

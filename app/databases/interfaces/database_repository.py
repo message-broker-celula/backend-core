@@ -43,8 +43,8 @@ class DatabaseManagementRepositoryProtocol(Protocol):
         """Pause a database instance (sp_PausarBD)."""
         ...
 
-    def resume_database(self, subject: str, database_id: str) -> None:
-        """Resume a previously paused database instance."""
+    def resume_database(self, subject: str, database_id: str, ip: str | None = None) -> None:
+        """Resume a previously paused database instance (sp_ReanudarBD)."""
         ...
 
     def register_activity(self, database_id: str, ttl_days: int = 30) -> None:

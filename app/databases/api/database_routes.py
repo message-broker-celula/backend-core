@@ -285,6 +285,7 @@ def pause_database(
     summary="Resume a paused database instance",
 )
 def resume_database(
+    request: Request,
     database_id: str,
     current_user: CurrentUser,
     service: Service,
@@ -293,7 +294,13 @@ def resume_database(
 
     try:
         _touch_database(service, current_user.subject, database_id)
-        return service.resume_database(current_user.subject, database_id)
+        return service.resume_database(
+            current_user.subject,
+            database_id,
+            request.client.host if request.client else None,
+        )
+    except BusinessRuleViolationError as exc:
+        raise _business_error(exc) from exc
     except DatabaseIntegrationError as exc:
         raise _unavailable(exc) from exc
 

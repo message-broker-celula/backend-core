@@ -270,10 +270,12 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
             procedure_name="sp_PausarBD",
         )
 
-    def resume_database(self, subject: str, database_id: str) -> None:
-        """There is no sp_ReanudarBD in the current database contract."""
-
-        raise RepositoryMappingError("sp_ReanudarBD is not part of the database contract")
+    def resume_database(self, subject: str, database_id: str, ip: str | None = None) -> None:
+        self._executor.execute_sql(
+            "EXEC sp_ReanudarBD @id_bd = ?, @id_usuario = ?, @ip = ?;",
+            (database_id, subject, ip),
+            procedure_name="sp_ReanudarBD",
+        )
 
     def register_activity(self, database_id: str, ttl_days: int = 30) -> None:
         self._executor.execute_sql(
@@ -335,8 +337,14 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
         )
 
     def get_ttl_days_remaining(self, database_id: str) -> int | None:
+        # SQL Server requires the schema prefix for scalar UDFs called in an
+        # expression context (unlike table-valued functions used in FROM,
+        # e.g. fn_ObtenerBD) -- omitting "dbo." here previously made SQL
+        # Server treat this as an attempt to call a nonexistent *built-in*
+        # function, failing with a misleading "not a recognized function
+        # name" error even though dbo.fn_DiasRestantesTTL exists and works.
         result = self._executor.execute_sql(
-            "SELECT fn_DiasRestantesTTL(?) AS dias_restantes;",
+            "SELECT dbo.fn_DiasRestantesTTL(?) AS dias_restantes;",
             (database_id,),
             procedure_name="fn_DiasRestantesTTL",
         )
@@ -346,7 +354,7 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
 
     def get_space_percentage(self, database_id: str) -> float | None:
         result = self._executor.execute_sql(
-            "SELECT fn_PorcentajeEspacioUsado(?) AS porcentaje_usado;",
+            "SELECT dbo.fn_PorcentajeEspacioUsado(?) AS porcentaje_usado;",
             (database_id,),
             procedure_name="fn_PorcentajeEspacioUsado",
         )
@@ -373,6 +381,14 @@ class SQLServerRepository(DatabaseRepositoryProtocol):
             for row in result.rows
             if row.get("puerto") is not None
         )
+
+    def get_public_metrics(self) -> Mapping[str, Any]:
+        result = self._executor.execute_sql(
+            "SELECT * FROM dbo.fn_MetricasPublicas();",
+            (),
+            procedure_name="fn_MetricasPublicas",
+        )
+        return self._first_row(result.rows, "fn_MetricasPublicas")
 
     def register_event(
         self,
