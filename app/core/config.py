@@ -235,7 +235,9 @@ class Settings(BaseSettings):
     # AI-as-a-service (Ollama Gateway -- a separate team's already-built,
     # OpenAI-compatible service). This backend only handles key issuance/
     # rotation/revocation/usage visibility, never proxies inference calls.
-    ai_gateway_base_url: str = Field(default="https://docs.api.idempotencia.andrescortes.dev")
+    # Confirmed live against the real service (docs.api.* from the AI
+    # team's original guide never resolved in DNS -- qa.api.* is correct).
+    ai_gateway_base_url: str = Field(default="https://qa.api.idempotencia.andrescortes.dev")
     ai_gateway_request_timeout_seconds: int = Field(default=30)
 
     @property
